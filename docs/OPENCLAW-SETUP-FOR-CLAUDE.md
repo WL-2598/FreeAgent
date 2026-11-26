@@ -45,17 +45,25 @@ openclaw mcp doctor freeagent --probe
 openclaw mcp probe freeagent --json
 ```
 
-预期：列出 16 个 `fa_*` 工具。若工具列表为空，检查 OpenClaw 工具档位不是 `minimal`（使用 `coding` 或 `messaging`）。
+预期：列出 17 个 `fa_*` 工具。若工具列表为空，检查 OpenClaw 工具档位不是 `minimal`（使用 `coding` 或 `messaging`）。
 
 **此时不要开启写入。** 先限制为只读工具：
 
 ```bash
-openclaw mcp tools freeagent --include 'fa_policy,fa_list,fa_find,fa_read_text,fa_browser_open,fa_task_start,fa_task_reply,fa_task_list,fa_task_status,fa_task_cancel,fa_task_reject,fa_task_undo'
+openclaw mcp tools freeagent --include 'fa_policy,fa_doctor,fa_list,fa_find,fa_read_text,fa_browser_open,fa_task_start,fa_task_reply,fa_task_list,fa_task_status,fa_task_cancel,fa_task_reject,fa_task_undo'
 ```
 
 注意：`fa_task_reply` 遇到 `fs.list` / `fs.find` 会直接执行（按文件名找文件用 `fs.find`，例如 `*.pdf`）；空目录现在会返回明确的「空目录，共 0 项」观察结果，避免模型反复列目录。变更动作只会预览，不会执行；即使误调批准工具，只读配置下写入也会被拒绝。
 
 如果第一波任务需要读取文件内容，但不想开启写入，可以在注册 MCP 时显式加入 `FREEAGENT_MCP_ALLOW_READS=1`（只对 `fs.read_text` 生效，不打开写入）；否则 `fs.read_text` 会停在 `awaiting_approval`。
+
+## 3.1 拉取后先自检（新增）
+
+```bash
+freeagent doctor
+```
+
+应显示「FreeAgent 自检：通过」、MCP 工具数 17、写入关闭。也可通过 MCP 调用 `fa_doctor` 得到同样结果。若有 FAIL，先按输出修复，不要继续测试。
 
 ## 4. 配置 OpenClaw 复用用户已登录的 Chrome
 
@@ -108,7 +116,7 @@ openclaw browser --browser-profile openclaw snapshot --format ai
    - 若返回 `awaiting_model` 且含 `next_prompt`，把下一轮提示词发给 DeepSeek，继续循环。
    - 若返回 `awaiting_approval`，说明模型提出了变更动作：**停止，向用户展示 preview 与 risk，等待用户明确批准**。
    - 若返回 `ok=false` 或 `blocked`，向用户报告原因，不要自行修改策略或重试更高权限操作。
-5. 模型返回 `task.done` 后，调用 `fa_task_status(task_id)` 展示审计摘要给用户；用 `fa_task_list` 可列出所有任务级会话。
+5. 模型返回 `task.done` 后，调用 `fa_task_status(task_id)` 展示审计摘要给用户；用 `fa_task_list` 可列出所有任务级会话。若状态为 `awaiting_model`，`fa_task_status` 会返回 `next_prompt`，服务重启后也能直接续跑。提示词含最近动作摘要与「不要重复无新信息的动作」规则，若 DeepSeek 仍重复同一动作，把 `next_prompt` 原文发回。
 
 验收标准：工作区文件没有新增、修改或移动；终端 `freeagent history` 里能看到该任务与每一步动作。
 
@@ -136,7 +144,7 @@ openclaw mcp doctor freeagent --probe
 2. 每轮把 `next_prompt` 发给 DeepSeek，回复原文交给 `fa_task_reply`。
 3. 出现 `awaiting_approval` 时：把 `preview`、`risk` 完整展示给用户，得到明确确认后，才调用 `fa_task_approve(task_id, approval_token)`。
 4. 若调用 `fa_commit` 路径：先 `fa_prepare(action, arguments)` 看预览，再用户确认，再 `fa_commit(token)`；令牌一次性且 5 分钟过期。
-5. 结束后用 `fa_task_status(task_id)` 查看审计，用 `fa_task_undo(task_id)` 或 `fa_undo(token)` 演示撤销。
+5. 结束后用 `fa_task_status(task_id)` 查看审计，用 `fa_task_undo(task_id)` 或 `fa_undo(token)` 演示撤销；过期审计可用 `freeagent purge` 清理。
 
 验收标准：未批准前文件完全不变；批准后文件变更并记录 undo；重复提交令牌会报错；越权路径会被拒绝且零变更。
 

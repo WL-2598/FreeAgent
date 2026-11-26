@@ -103,7 +103,7 @@ def test_mcp_stdio_handshake_and_tools(env: Env) -> None:
     annotations, text = asyncio.run(run())
     names = set(annotations)
     expected = {
-        "fa_policy", "fa_list", "fa_find", "fa_read_text", "fa_browser_open",
+        "fa_policy", "fa_doctor", "fa_list", "fa_find", "fa_read_text", "fa_browser_open",
         "fa_prepare", "fa_commit", "fa_undo",
         "fa_task_start", "fa_task_reply", "fa_task_approve", "fa_task_reject",
         "fa_task_cancel", "fa_task_status", "fa_task_list", "fa_task_undo",
@@ -116,6 +116,7 @@ def test_mcp_stdio_handshake_and_tools(env: Env) -> None:
         ann = annotations[name]
         return bool(getattr(ann, field))
 
+    assert hint("fa_doctor", "read_only_hint") is True
     assert hint("fa_list", "read_only_hint") is True
     assert hint("fa_find", "read_only_hint") is True
     assert hint("fa_task_approve", "destructive_hint") is True

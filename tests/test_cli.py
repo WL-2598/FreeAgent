@@ -111,3 +111,10 @@ def test_purge_removes_old_audit_records(env: Env) -> None:
     assert result.exit_code == 0, result.output
     assert "已清理 1" in result.output
     assert audit.get_task("old-task") is None
+
+
+def test_doctor_cli(env: Env) -> None:
+    result = invoke("doctor")
+    assert result.exit_code == 0, result.output
+    assert "FreeAgent 自检：通过" in result.output
+    assert "MCP 工具数：17" in result.output

@@ -29,7 +29,7 @@ app.add_typer(config_app, name="config")
 
 COMMANDS = {
     "setup", "models", "login", "run", "approve", "reject", "status",
-    "cancel", "undo", "history", "purge", "demo", "task-demo", "mcp", "config", "--help", "-h",
+    "cancel", "undo", "history", "purge", "doctor", "demo", "task-demo", "mcp", "config", "--help", "-h",
 }
 
 
@@ -218,6 +218,25 @@ def purge(
     keep = days or cfg.audit_retention_days
     removed = AuditLog(layout).purge_old(keep)
     typer.echo(f"已清理 {removed} 个早于 {keep} 天的任务及其动作、撤销与审计记录。")
+
+
+@app.command()
+def doctor() -> None:
+    """测试前自检：环境、工作区权限、审计库、MCP 依赖与连接器状态。"""
+    from .doctor import run_doctor
+
+    result = run_doctor()
+    typer.echo(f"FreeAgent 自检：{'通过' if result['ok'] else '未通过'}")
+    for item in result["checks"]:
+        flag = "OK  " if item["ok"] else "FAIL"
+        typer.echo(f"[{flag}] {item['name']}：{item['detail']}")
+    typer.echo(f"MCP 工具数：{result['tool_count']}；写入：{'开启' if result['write_enabled'] else '关闭'}；"
+               f"文件内容读取：{'开启' if result['reads_enabled'] else '默认需批准'}")
+    typer.echo("下一步：")
+    for step in result["next_steps"]:
+        typer.echo(f"  · {step}")
+    if not result["ok"]:
+        raise typer.Exit(1)
 
 
 @config_app.command("show")

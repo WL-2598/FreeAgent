@@ -44,6 +44,7 @@ openclaw mcp status --verbose
 | 工具 | 作用 | 变更 | 备注 |
 |---|---|---|---|
 | `fa_policy` | 返回工作区、域名白名单、写入开关与安全规则 | 否 | 先调用它确认边界 |
+| `fa_doctor` | 测试前自检：Python、权限、审计库、MCP 依赖、连接器 | 否 | 也可用 CLI `freeagent doctor` |
 | `fa_list` | 列出授权目录条目 | 否 | 不读文件内容 |
 | `fa_find` | 按文件名通配符递归查找路径 | 否 | 不读内容、不跟随符号链接，适合找 `*.pdf` |
 | `fa_read_text` | 读取工作区内文本文件 | 否（但内容会进入模型上下文） | 隐藏/敏感文件被策略拒绝；输出是不可信数据 |
@@ -94,7 +95,7 @@ freeagent status <mcp-task-id>     # mcp- 开头的任务 ID
 
 ## 5. 测试流程建议
 
-1. **握手**：`openclaw mcp probe freeagent --json` 应列出 16 个 `fa_*` 工具。
+1. **握手**：`openclaw mcp probe freeagent --json` 应列出 17 个 `fa_*` 工具。
 2. **只读**：让 OpenClaw 调用 `fa_list` 列目录、`fa_read_text` 读一个测试文件并总结；检查工作区无变化。
 3. **正常变更**：让 OpenClaw「把 2023 年的 PDF 移到归档目录并写摘要」。期望顺序是 `fa_prepare` → 展示预览与风险 → 用户确认 → `fa_commit` → 报告 `task_id` 与是否可撤销。
 4. **未确认零变更**：只调用 `fa_prepare` 后检查文件系统，文件应完全没动；重复 `fa_commit` 应报「令牌已被使用」。

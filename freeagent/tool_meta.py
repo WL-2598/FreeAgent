@@ -27,6 +27,7 @@ class ToolPolicy:
 
 TOOL_POLICY: dict[str, ToolPolicy] = {
     "fa_policy": ToolPolicy(True, idempotent=True),
+    "fa_doctor": ToolPolicy(True, idempotent=True),
     "fa_list": ToolPolicy(True, idempotent=True),
     "fa_find": ToolPolicy(True, idempotent=True),
     "fa_read_text": ToolPolicy(True, idempotent=True),

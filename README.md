@@ -43,7 +43,7 @@ freeagent config allow-domain example.org   # 域名白名单
 
 ## 接入 OpenClaw
 
-FreeAgent 提供 stdio MCP 服务器（`pip install -e '.[mcp]'`），OpenClaw 可直接挂载白名单工具。零散变更用 `fa_prepare` → 预览/批准 → `fa_commit` 两阶段；完整任务用 `fa_task_start` → `fa_task_reply`（提交网页模型回复）→ `fa_task_approve`（用户确认）→ 继续 reply，直到完成，并可 `fa_task_status` / `fa_task_list` / `fa_task_undo`；另有 `fa_find` 可按文件名安全定位文件。默认只读，令牌一次性且绑定动作参数（任务级令牌只存哈希，重启后仍可在有效期内批准）；批准人与「所见预览哈希」写入审计。所有 MCP 工具带 `readOnlyHint` / `destructiveHint` / `openWorldHint` 元数据，便于 OpenClaw 过滤。敏感文件名/后缀可通过 `freeagent config deny-name` / `deny-suffix` 追加（默认规则不可移除，可 `--workspace` 限定工作区）；提示词每次附带最近动作摘要和「不要重复无新信息的动作」规则；`fa_task_status` 在等待模型时会返回 `next_prompt`，服务重启后可续跑。撤销会恢复原内容与时间戳。可用 `freeagent purge` 清理超过保留期的本地审计。完整注册命令、工具表、安全配置与测试流程见 [docs/OPENCLAW.md](docs/OPENCLAW.md)；可直接发给另一个智能体的配置说明见 [docs/OPENCLAW-SETUP-FOR-CLAUDE.md](docs/OPENCLAW-SETUP-FOR-CLAUDE.md)。
+FreeAgent 提供 stdio MCP 服务器（`pip install -e '.[mcp]'`），OpenClaw 可直接挂载白名单工具。零散变更用 `fa_prepare` → 预览/批准 → `fa_commit` 两阶段；完整任务用 `fa_task_start` → `fa_task_reply`（提交网页模型回复）→ `fa_task_approve`（用户确认）→ 继续 reply，直到完成，并可 `fa_task_status` / `fa_task_list` / `fa_task_undo`；另有 `fa_find` 可按文件名安全定位文件。默认只读，令牌一次性且绑定动作参数（任务级令牌只存哈希，重启后仍可在有效期内批准）；批准人与「所见预览哈希」写入审计。所有 MCP 工具带 `readOnlyHint` / `destructiveHint` / `openWorldHint` 元数据，便于 OpenClaw 过滤。敏感文件名/后缀可通过 `freeagent config deny-name` / `deny-suffix` 追加（默认规则不可移除，可 `--workspace` 限定工作区）；提示词每次附带最近动作摘要和「不要重复无新信息的动作」规则；`fa_task_status` 在等待模型时会返回 `next_prompt`，服务重启后可续跑。撤销会恢复原内容与时间戳。可用 `freeagent purge` 清理超过保留期的本地审计。拉取后先运行 `freeagent doctor`（或通过 MCP 调 `fa_doctor`）确认环境就绪。完整注册命令、工具表、安全配置与测试流程见 [docs/OPENCLAW.md](docs/OPENCLAW.md)；可直接发给另一个智能体的配置说明见 [docs/OPENCLAW-SETUP-FOR-CLAUDE.md](docs/OPENCLAW-SETUP-FOR-CLAUDE.md)。
 
 ## 动作协议（节选）
 

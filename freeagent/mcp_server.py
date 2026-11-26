@@ -23,6 +23,7 @@ from typing import Any
 
 from .audit import AuditLog
 from .config import Config, Layout, default_layout, load_config
+from .doctor import run_doctor
 from .errors import ConnectorError, FreeAgentError, PolicyError, ToolError
 from .orchestrator import time_limit
 from .policy import Policy
@@ -122,7 +123,7 @@ class McpBridge:
         reads = "开启（fs.read_text 可无条件读取）" if self.allow_reads else "默认（fs.read_text 需批准）"
         return (
             f"FreeAgent MCP 已连接。写入状态：{state}；文件内容读取：{reads}\n{self.policy.describe()}\n"
-            "可用工具：fa_policy, fa_list, fa_find, fa_read_text, fa_browser_open, "
+            "可用工具：fa_policy, fa_doctor, fa_list, fa_find, fa_read_text, fa_browser_open, "
             "fa_prepare, fa_commit, fa_undo（后三项受写入开关与令牌约束）。\n"
             "禁止：shell / 任意程序执行 / 删除 / 凭据读取 / 绕过网站限制。\n"
             f"{policy_summary()}\n"
@@ -257,6 +258,10 @@ def build_server() -> Any:
     @server.tool(name="fa_policy", annotations=hints("fa_policy"), description="查看 FreeAgent 的本地边界、工作区、允许域名与写入开关")
     def fa_policy() -> str:
         return bridge.policy_text()
+
+    @server.tool(name="fa_doctor", annotations=hints("fa_doctor"), description="运行测试前自检并返回工作区、权限、审计库与连接器状态")
+    def fa_doctor() -> str:
+        return as_text(run_doctor(bridge.config, bridge.layout))
 
     @server.tool(name="fa_list", annotations=hints("fa_list"), description="列出授权目录条目（只读，不读取文件内容）")
     def fa_list(path: str = ".") -> str:
