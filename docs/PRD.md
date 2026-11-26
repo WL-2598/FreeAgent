@@ -50,7 +50,7 @@
 ## 5. MVP 功能优先级
 
 - **P0（已完成）**：CLI/setup；结构化动作协议与严格解析；工作区沙箱与符号链接防护；工具白名单（list/read/mkdir/move/write/browser.open）；dry-run 与逐项确认；暂停/批准/拒绝/取消；SQLite+JSONL 审计；undo；手动粘贴连接器；测试覆盖注入/越权/取消。
-- **P1（部分完成）**：已增加 OpenClaw 接入用 MCP 适配层（只读默认 + prepare/commit 两阶段 + undo，见 `docs/OPENCLAW.md`）；待做：TUI 与更友好的差异预览、手动模式多轮粘贴体验、连接器健康诊断清单、审计保留期自动化、只读网页内容提取（需条款确认）。
+- **P1（部分完成）**：已增加 OpenClaw 接入用 MCP 适配层（只读默认 + prepare/commit 两阶段 + undo）和任务级 MCP 流程（`fa_task_start/reply/approve/status/undo`，外部智能体只做模型传输层，本地保留全部安全决策；见 `docs/OPENCLAW.md`）；待做：TUI 与更友好的差异预览、手动模式多轮粘贴体验、连接器健康诊断清单、审计保留期自动化、只读网页内容提取（需条款确认）。
 - **P2（后续）**：逐站验证后的网页连接器；可插拔更多合规连接器；受限的额外工具；多工作区配置档。
 
 ## 6. MVP 验收标准（对应交接稿）

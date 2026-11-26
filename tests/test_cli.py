@@ -58,6 +58,14 @@ def test_run_approve_and_undo_via_cli(env: Env) -> None:
     assert not (env.workspace / "note.md").exists()
 
 
+def test_task_demo_cli(env: Env) -> None:
+    result = invoke("task-demo")
+    assert result.exit_code == 0, result.output
+    assert "fa_task_reply → awaiting_approval" in result.output
+    assert "最终状态：done" in result.output
+    assert "fa_task_undo" in result.output
+
+
 def test_direct_task_dispatch(monkeypatch) -> None:
     seen: list[list[str]] = []
     monkeypatch.setattr(cli, "app", lambda: seen.append(sys.argv.copy()))
