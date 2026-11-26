@@ -80,7 +80,9 @@ openclaw mcp add freeagent \
 openclaw mcp doctor freeagent --probe
 ```
 
-重要：`fa_commit` 的令牌机制是**本地二次确认**，不是人类批准。请在 OpenClaw 的工具策略里对 `fa_commit` / `fa_undo` 要求用户批准；若暂时无法配置，就保持只读过滤（不 include 这两个工具）。
+重要：`fa_commit` 的令牌机制是**本地二次确认**，不是人类批准。请在 OpenClaw 的工具策略里对 `fa_commit` / `fa_undo` / `fa_task_approve` 要求用户批准；若暂时无法配置，就保持只读过滤（不 include 这几个工具）。任务级会话同样受 `FREEAGENT_MCP_ALLOW_WRITE` 约束：只读配置下，即使 `fa_task_approve` 被暴露，变更动作也会被安全拒绝。
+
+只读取文件内容而不开写入：注册时加 `--env FREEAGENT_MCP_ALLOW_READS=1`。该开关仅允许 `fs.read_text` 在任务级流程里直接执行，不改变写入权限。
 
 每步的真实审计可在终端查看：
 

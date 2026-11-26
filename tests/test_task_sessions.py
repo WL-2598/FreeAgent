@@ -10,8 +10,11 @@ from freeagent.task_session import TaskSessions
 from .conftest import Env, action
 
 
-def sessions(env: Env) -> TaskSessions:
-    return TaskSessions(env.config, AuditLog(env.layout))
+def sessions(env: Env, *, allow_write: bool = True, allow_reads: bool = False) -> TaskSessions:
+    return TaskSessions(
+        env.config, AuditLog(env.layout),
+        allow_write=allow_write, allow_reads=allow_reads,
+    )
 
 
 def test_full_task_flow_with_approval_and_undo(env: Env) -> None:
@@ -91,6 +94,29 @@ def test_reject_and_cancel_leave_no_changes(env: Env) -> None:
     other = service.start("取消测试")["task_id"]
     assert service.cancel(other)["status"] == "cancelled"
     assert service.reply(other, action("fs.list"))["ok"] is False
+
+
+def test_write_is_blocked_even_if_approve_tool_is_available(env: Env) -> None:
+    service = sessions(env, allow_write=False)
+    task_id = service.start("只读配置下的写入测试")["task_id"]
+    result = service.reply(
+        task_id, action("fs.write_text", path="nope.md", content="x")
+    )
+    assert result["ok"] is False
+    assert "写入未启用" in result["error"]
+    assert service.status(task_id)["status"] == "blocked"
+    assert not (env.workspace / "nope.md").exists()
+    assert service.approve(task_id, "anything")["ok"] is False
+
+
+def test_explicit_read_flag_allows_file_content_in_read_only_flow(env: Env) -> None:
+    (env.workspace / "note.txt").write_text("hello from file")
+    service = sessions(env, allow_write=False, allow_reads=True)
+    task_id = service.start("读取文件内容")["task_id"]
+    result = service.reply(task_id, action("fs.read_text", path="note.txt", max_chars=100))
+    assert result["status"] == "awaiting_model"
+    assert "approval_token" not in result
+    assert "hello from file" in result["next_prompt"]
 
 
 def test_task_state_survives_new_session_instance(env: Env) -> None:

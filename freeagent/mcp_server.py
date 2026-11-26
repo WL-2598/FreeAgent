@@ -68,6 +68,7 @@ class McpBridge:
         if allow_write is None:
             allow_write = os.environ.get("FREEAGENT_MCP_ALLOW_WRITE", "0").strip().lower() in TRUE_VALUES
         self.allow_write = allow_write
+        self.allow_reads = os.environ.get("FREEAGENT_MCP_ALLOW_READS", "0").strip().lower() in TRUE_VALUES
         try:
             self.ttl = max(10, min(3600, int(os.environ.get("FREEAGENT_MCP_TOKEN_TTL", "300"))))
         except ValueError:
@@ -111,8 +112,9 @@ class McpBridge:
 
     def policy_text(self) -> str:
         state = "开启（fa_prepare / fa_commit 可用）" if self.allow_write else "关闭（仅只读工具）"
+        reads = "开启（fs.read_text 可无条件读取）" if self.allow_reads else "默认（fs.read_text 需批准）"
         return (
-            f"FreeAgent MCP 已连接。写入状态：{state}\n{self.policy.describe()}\n"
+            f"FreeAgent MCP 已连接。写入状态：{state}；文件内容读取：{reads}\n{self.policy.describe()}\n"
             "可用工具：fa_policy, fa_list, fa_read_text, fa_browser_open, "
             "fa_prepare, fa_commit, fa_undo（后三项受写入开关与令牌约束）。\n"
             "禁止：shell / 任意程序执行 / 删除 / 凭据读取 / 绕过网站限制。\n"
@@ -215,7 +217,11 @@ def build_server() -> Any:
         raise ConnectorError("缺少 MCP 依赖，请运行：pip install -e '.[mcp]'") from exc
 
     bridge = McpBridge()
-    sessions = TaskSessions(bridge.config, bridge.audit)
+    sessions = TaskSessions(
+        bridge.config, bridge.audit,
+        allow_write=bridge.allow_write,
+        allow_reads=bridge.allow_reads,
+    )
     server = MCPServer(
         name="freeagent",
         instructions=(

@@ -53,7 +53,9 @@ openclaw mcp probe freeagent --json
 openclaw mcp tools freeagent --include 'fa_policy,fa_list,fa_read_text,fa_browser_open,fa_task_start,fa_task_reply,fa_task_status,fa_task_cancel,fa_task_reject,fa_task_undo'
 ```
 
-注意：`fa_task_reply` 遇到只读动作会执行 `fs.list`，但变更动作只会预览，不会执行。
+注意：`fa_task_reply` 遇到 `fs.list` 会直接执行；空目录现在会返回明确的「空目录，共 0 项」观察结果，避免模型反复列目录。变更动作只会预览，不会执行；即使误调批准工具，只读配置下写入也会被拒绝。
+
+如果第一波任务需要读取文件内容，但不想开启写入，可以在注册 MCP 时显式加入 `FREEAGENT_MCP_ALLOW_READS=1`（只对 `fs.read_text` 生效，不打开写入）；否则 `fs.read_text` 会停在 `awaiting_approval`。
 
 ## 4. 配置 OpenClaw 复用用户已登录的 Chrome
 

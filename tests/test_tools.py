@@ -68,6 +68,13 @@ def test_move_never_overwrites(env: Env) -> None:
     assert (env.workspace / "b.txt").read_text() == "b"
 
 
+def test_empty_directory_gives_explicit_observation(env: Env) -> None:
+    _, listed = run_tool(env, action("fs.list", path="."))
+    assert "空目录" in listed.output
+    assert "0 项" in listed.output
+    assert "列出 0 项" in listed.display
+
+
 def test_read_size_limit_and_truncation(env: Env) -> None:
     (env.workspace / "big.txt").write_text("x" * 1000)
     cfg = env.config.model_copy(update={"max_file_bytes": 100})
