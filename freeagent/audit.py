@@ -109,7 +109,9 @@ class AuditLog:
         if value is None:
             return None
         if isinstance(value, str):
-            return log_text(value, 20_000)
+            # 结构化状态字段要完整保存，避免动作 JSON 被中途截断后无法恢复。
+            limit = 100_000 if key in {"pending_action", "pending_preview", "observation"} else 20_000
+            return log_text(value, limit)
         return value
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:

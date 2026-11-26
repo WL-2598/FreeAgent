@@ -101,8 +101,60 @@ def test_mcp_stdio_handshake_and_tools(env: Env) -> None:
                 return {tool.name for tool in tools.tools}, text
 
     names, text = asyncio.run(run())
-    assert {"fa_policy", "fa_list", "fa_read_text", "fa_browser_open", "fa_prepare", "fa_commit", "fa_undo"} <= names
+    expected = {
+        "fa_policy", "fa_list", "fa_read_text", "fa_browser_open",
+        "fa_prepare", "fa_commit", "fa_undo",
+        "fa_task_start", "fa_task_reply", "fa_task_approve", "fa_task_reject",
+        "fa_task_cancel", "fa_task_status", "fa_task_undo",
+    }
+    assert expected <= names
     assert "写入状态：关闭" in text
+
+
+def test_mcp_stdio_task_level_flow(env: Env) -> None:
+    pytest.importorskip("mcp")
+
+    async def run() -> dict[str, dict]:
+        from mcp import ClientSession
+        from mcp.client.stdio import StdioServerParameters, stdio_client
+
+        environ = os.environ.copy()
+        environ.update(
+            FREEAGENT_HOME=str(env.home),
+            FREEAGENT_WORKSPACE=str(env.workspace),
+        )
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "freeagent.mcp_server"],
+            env=environ,
+            cwd=str(Path(__file__).resolve().parents[1]),
+        )
+
+        async def call(session: ClientSession, name: str, args: dict) -> dict:
+            result = await session.call_tool(name, args)
+            text = "".join(getattr(part, "text", "") or "" for part in result.content)
+            return json.loads(text)
+
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                started = await call(session, "fa_task_start", {"goal": "列出工作区文件"})
+                listed = await call(session, "fa_task_reply", {
+                    "task_id": started["task_id"],
+                    "response": '{"action":"fs.list","arguments":{"path":"."},"reason":"test"}',
+                })
+                done = await call(session, "fa_task_reply", {
+                    "task_id": started["task_id"],
+                    "response": '{"action":"task.done","arguments":{"summary":"完成"},"reason":"test"}',
+                })
+                status = await call(session, "fa_task_status", {"task_id": started["task_id"]})
+                return {"started": started, "listed": listed, "done": done, "status": status}
+
+    result = asyncio.run(run())
+    assert result["started"]["status"] == "awaiting_model"
+    assert result["listed"]["status"] == "awaiting_model"
+    assert result["done"]["status"] == "done"
+    assert result["status"]["status"] == "done"
 
 
 def test_mcp_stdio_two_phase_commit_and_undo(env: Env) -> None:

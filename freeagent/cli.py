@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import tempfile
@@ -28,7 +29,7 @@ app.add_typer(config_app, name="config")
 
 COMMANDS = {
     "setup", "models", "login", "run", "approve", "reject", "status",
-    "cancel", "undo", "history", "demo", "mcp", "config", "--help", "-h",
+    "cancel", "undo", "history", "demo", "task-demo", "mcp", "config", "--help", "-h",
 }
 
 
@@ -268,6 +269,51 @@ def demo() -> None:
     task_record = runner.run("列出工作区中的 PDF，提出归档方案，移动 2023 年报告并写摘要。", connector, task_id=short_id())
     typer.echo(f"\n演示结束：{task_record['status']}。演示目录保留在：{temp_root}")
     _exit_for(task_record)
+
+
+def _demo_action(name: str, **arguments: object) -> str:
+    return json.dumps({"action": name, "arguments": arguments, "reason": "演示"}, ensure_ascii=False)
+
+
+@app.command("task-demo")
+def task_demo() -> None:
+    """演示任务级 MCP 闭环（模拟模型回复 + 临时工作区，不联网）。"""
+    root = Path(tempfile.mkdtemp(prefix="freeagent-task-demo-"))
+    workspace = root / "workspace"
+    (workspace / "docs").mkdir(parents=True)
+    (workspace / "docs" / "report-2024.pdf").write_bytes(b"%PDF-1.4 demo\n")
+    layout = Layout(root / "state")
+    cfg = Config(workspace=str(workspace), max_steps=10, max_rounds=15)
+    save_config(cfg, layout)
+
+    from .audit import AuditLog
+    from .task_session import TaskSessions
+
+    sessions = TaskSessions(cfg, AuditLog(layout))
+    started = sessions.start("列出工作区文件，并写一份简短摘要")
+    task_id = started["task_id"]
+    typer.echo(f"任务级 MCP 演示（模拟模型 + 临时工作区）：{workspace}")
+    typer.echo(f"任务 ID：{task_id}；状态：{started['status']}")
+    typer.echo("fa_task_start 返回的提示词包含安全规则、工具白名单与本地边界。")
+
+    replies = [
+        _demo_action("fs.list", path="."),
+        _demo_action("fs.write_text", path="summary.md", content="# 摘要\n发现 docs/report-2024.pdf\n"),
+        _demo_action("task.done", summary="已列出文件并写入摘要"),
+    ]
+    for reply in replies:
+        result = sessions.reply(task_id, reply)
+        typer.echo(f"\nfa_task_reply → {result['status']}：{result.get('action', '终止动作')}")
+        if result["status"] == "awaiting_approval":
+            typer.echo("预览（此时文件未发生任何变化）：")
+            typer.echo(result["preview"])
+            approved = sessions.approve(task_id, result["approval_token"])
+            typer.echo(f"fa_task_approve → {approved['status']}：{approved['result']}")
+
+    status = sessions.status(task_id)
+    typer.echo(f"\n最终状态：{status['status']}；审计动作 {len(status['actions'])} 条；可撤销 {status['undoable']} 条")
+    typer.echo(f"fa_task_undo → {sessions.undo(task_id)['results'][0]}")
+    typer.echo(f"演示目录保留在：{root}")
 
 
 def main() -> None:
