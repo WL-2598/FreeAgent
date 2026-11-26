@@ -48,7 +48,10 @@ class FsListTool:
                 continue
         if len(entries) > 200:
             lines.append(f"…[仅显示前 200 项，共 {len(entries)} 项]")
-        return Execution("\n".join(lines), f"列出 {len(lines)} 项：{target}")
+        # 空目录也必须给模型一个明确观察结果，否则它会误以为工具没有返回、
+        # 反复重复 fs.list（实测过的空转场景）。
+        output = "\n".join(lines) if lines else f"（空目录，共 0 项：{target}）"
+        return Execution(output, f"列出 {len(entries)} 项：{target}")
 
 
 class FsReadTextTool:

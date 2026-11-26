@@ -289,7 +289,7 @@ def task_demo() -> None:
     from .audit import AuditLog
     from .task_session import TaskSessions
 
-    sessions = TaskSessions(cfg, AuditLog(layout))
+    sessions = TaskSessions(cfg, AuditLog(layout), allow_write=True)
     started = sessions.start("列出工作区文件，并写一份简短摘要")
     task_id = started["task_id"]
     typer.echo(f"任务级 MCP 演示（模拟模型 + 临时工作区）：{workspace}")

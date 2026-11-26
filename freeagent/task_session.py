@@ -8,6 +8,7 @@ FreeAgent 保留全部安全决策：提示词、单步动作、策略校验、�
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from typing import Any
 
@@ -30,6 +31,8 @@ from .utils import short_id
 
 ACTIVE_STATUS = frozenset({"awaiting_model", "awaiting_approval"})
 TERMINAL_STATUS = frozenset({"done", "blocked", "cancelled"})
+MUTATING_ACTIONS = frozenset({"fs.mkdir", "fs.move", "fs.write_text"})
+TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 class TaskSessions:
@@ -39,11 +42,19 @@ class TaskSessions:
         audit: AuditLog,
         *,
         registry: ToolRegistry | None = None,
+        allow_write: bool | None = None,
+        allow_reads: bool | None = None,
     ) -> None:
         self.config = config
         self.audit = audit
         self.policy = Policy(config)
         self.registry = registry or default_registry()
+        if allow_write is None:
+            allow_write = os.environ.get("FREEAGENT_MCP_ALLOW_WRITE", "0").strip().lower() in TRUE_VALUES
+        if allow_reads is None:
+            allow_reads = os.environ.get("FREEAGENT_MCP_ALLOW_READS", "0").strip().lower() in TRUE_VALUES
+        self.allow_write = allow_write
+        self.allow_reads = allow_reads  # 显式授权后可在只读流程里读取文件内容
         self._approval_codes: dict[str, str] = {}
 
     # ---- public API ----
@@ -114,7 +125,24 @@ class TaskSessions:
             self._finish(task_id, "blocked", error=f"策略校验失败，未执行任何变更：{log_text(str(exc), 600)}")
             return self._error(f"策略校验失败，任务已安全停止：{log_text(str(exc), 600)}")
 
-        if requires_confirmation(action):
+        # 只读配置下即使误调了 fa_task_approve，也不能偷偷执行变更。
+        if action.action in MUTATING_ACTIONS and not self.allow_write:
+            self.audit.append_action(
+                task_id, step, action.model_dump_json(), "rejected_policy", "写入未启用"
+            )
+            self._finish(
+                task_id, "blocked",
+                error="写入未启用：如确需变更，请以 FREEAGENT_MCP_ALLOW_WRITE=1 重启 MCP 并配置批准策略",
+            )
+            return self._error("写入未启用，任务已安全停止，未执行任何变更")
+
+        # 读取文件内容属于信息披露而非系统变更。默认仍需批准；用户可显式用
+        # FREEAGENT_MCP_ALLOW_READS=1 在只读流程中放开（不打开写入）。
+        needs_confirmation = requires_confirmation(action)
+        if action.action == "fs.read_text" and self.allow_reads:
+            needs_confirmation = False
+
+        if needs_confirmation:
             token = secrets.token_urlsafe(12)
             self._approval_codes[task_id] = token
             self.audit.update_task(
@@ -163,6 +191,8 @@ class TaskSessions:
         self._approval_codes.pop(task_id, None)
         try:
             action = parse_action(task["pending_action"] or "")
+            if action.action in MUTATING_ACTIONS and not self.allow_write:
+                return self._error("写入未启用，无法批准该动作；未执行任何变更")
             tool = self.registry.get(action.action)
             preview = tool.preview(action, self.policy)  # 执行前再次校验
             execution = self._execute(tool, action)
