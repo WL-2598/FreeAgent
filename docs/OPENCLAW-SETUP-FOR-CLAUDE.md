@@ -75,6 +75,24 @@ openclaw browser --browser-profile user snapshot --format ai
 
 如果无法附加：请用户确认远程调试已开启、Chrome 保持运行、已批准连接提示。不要尝试绕过。
 
+### 4.1 找不到开关或报 `Could not find DevToolsActivePort` 时的首选替代路线 A
+
+如果 `~/.config/google-chrome/DevToolsActivePort` 始终不存在（Chrome 157 上较常见），**不要再反复切开关**。改为使用 OpenClaw 自带的隔离浏览器，不动用户日常 Chrome：
+
+```bash
+# Linux 上托管浏览器默认 headless；需要可见窗口时加上环境变量
+OPENCLAW_BROWSER_HEADLESS=0 openclaw browser --browser-profile openclaw start
+openclaw browser --browser-profile openclaw status
+openclaw browser --browser-profile openclaw tabs
+openclaw browser --browser-profile openclaw snapshot --format ai
+```
+
+- 出现新窗口后，请用户**本人**在那个隔离窗口里登录一次 DeepSeek；FreeAgent 不读取该登录态，也不接触日常 Chrome。
+- 成功标准：`status` 显示 profile 为 `openclaw` 且 `running: true`，`tabs` 里有 DeepSeek 页面，`snapshot` 能读到页面文本。
+- 后续浏览器操作显式指定 `profile="openclaw"`。FreeAgent MCP 的 `fa_*` 工具照常使用。
+
+路线 B（Chrome 扩展配对）需要修复扩展目录权限，只在这两条路都走不通、且用户明确要求控制已登录 Chrome 时再考虑。
+
 ## 5. 第一波任务：只读闭环（必须先做）
 
 目标：用 DeepSeek 网页列出并总结工作区文件，**不产生任何写入**。
