@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -89,6 +90,17 @@ def test_config_allow_domain_and_dir(env: Env) -> None:
     assert str(extra) in shown.output
 
 
+def test_config_auto_purge_is_explicit(env: Env) -> None:
+    off = invoke("config", "auto-purge", "false")
+    assert off.exit_code == 0, off.output
+    assert "已关闭" in off.output
+    on = invoke("config", "auto-purge", "true")
+    assert on.exit_code == 0, on.output
+    assert "已开启" in on.output
+    shown = json.loads(invoke("config", "show").output)
+    assert shown["audit_auto_purge"] is True
+
+
 def test_config_deny_rules_via_cli(env: Env) -> None:
     added = invoke("config", "deny-name", "secret.txt", "--workspace")
     assert added.exit_code == 0, added.output
@@ -107,9 +119,15 @@ def test_purge_removes_old_audit_records(env: Env) -> None:
             "UPDATE tasks SET created_at=? WHERE id=?",
             ("2000-01-01T00:00:00+00:00", "old-task"),
         )
-    result = invoke("purge", "--days", "1")
-    assert result.exit_code == 0, result.output
-    assert "已清理 1" in result.output
+    preview = invoke("purge", "--days", "1")
+    assert preview.exit_code == 0, preview.output
+    assert "将清理：任务 1 条" in preview.output
+    assert "未删除任何记录" in preview.output
+    assert audit.get_task("old-task") is not None  # 默认 dry-run，不能真的删
+
+    applied = invoke("purge", "--days", "1", "--apply")
+    assert applied.exit_code == 0, applied.output
+    assert "已清理 1" in applied.output
     assert audit.get_task("old-task") is None
 
 
@@ -118,3 +136,12 @@ def test_doctor_cli(env: Env) -> None:
     assert result.exit_code == 0, result.output
     assert "FreeAgent 自检：通过" in result.output
     assert "MCP 工具数：17" in result.output
+    assert "连接器清单" in result.output
+    assert "网页自动化" in result.output
+
+    machine = invoke("doctor", "--json")
+    assert machine.exit_code == 0, machine.output
+    payload = json.loads(machine.output)
+    assert payload["ok"] is True
+    assert {item["id"] for item in payload["connectors"]} == {"manual", "mock", "web"}
+    assert payload["audit_auto_purge"] is False

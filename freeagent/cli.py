@@ -17,6 +17,7 @@ from .config import Config, Layout, load_config, save_config, setup
 from .connectors import ManualConnector, MockConnector, resolve_connector
 from .errors import ConnectorError, FreeAgentError
 from .orchestrator import AutoApproveUI, ConsoleUI, TaskRunner, cancel_task
+from .retention import maybe_auto_purge
 from .utils import short_id
 
 app = typer.Typer(
@@ -212,24 +213,47 @@ def mcp() -> None:
 @app.command()
 def purge(
     days: Optional[int] = typer.Option(None, "--days", min=1, help="保留天数，默认取配置 audit_retention_days"),
+    apply: bool = typer.Option(False, "--apply", help="实际删除；默认只预览，不改动任何数据"),
 ) -> None:
-    """清理超过保留期的本地任务与审计记录（仅本机）。"""
+    """预览或清理超过保留期的本地任务与审计记录（仅本机）。"""
     layout, cfg = _layout_and_config()
     keep = days or cfg.audit_retention_days
-    removed = AuditLog(layout).purge_old(keep)
+    audit = AuditLog(layout)
+    preview = audit.purge_preview(keep)
+    typer.echo(
+        f"审计保留期 {keep} 天；将清理：任务 {preview['tasks']} 条、动作 {preview['actions']} 条、"
+        f"撤销记录 {preview['undo_records']} 条、JSONL 日志 {preview['log_files']} 个。"
+    )
+    if not apply:
+        typer.echo("这是预览，未删除任何记录。确认后加 --apply 才会清理。")
+        return
+    removed = audit.purge_old(keep)
     typer.echo(f"已清理 {removed} 个早于 {keep} 天的任务及其动作、撤销与审计记录。")
 
 
 @app.command()
-def doctor() -> None:
+def doctor(
+    as_json: bool = typer.Option(False, "--json", help="输出机器可读 JSON，便于 OpenClaw/Claude 解析"),
+) -> None:
     """测试前自检：环境、工作区权限、审计库、MCP 依赖与连接器状态。"""
     from .doctor import run_doctor
 
     result = run_doctor()
+    if as_json:
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        if not result["ok"]:
+            raise typer.Exit(1)
+        return
     typer.echo(f"FreeAgent 自检：{'通过' if result['ok'] else '未通过'}")
     for item in result["checks"]:
         flag = "OK  " if item["ok"] else "FAIL"
         typer.echo(f"[{flag}] {item['name']}：{item['detail']}")
+    typer.echo("连接器清单：")
+    for item in result.get("connectors", []):
+        flag = "可用" if item["available"] else "不可用"
+        typer.echo(f"  · {item['label']}（{item['id']}）：{flag} — {item['detail']}")
+    typer.echo(f"审计保留期：{result.get('audit_retention_days', '-')} 天；"
+               f"自动清理：{'开启' if result.get('audit_auto_purge') else '关闭'}")
     typer.echo(f"MCP 工具数：{result['tool_count']}；写入：{'开启' if result['write_enabled'] else '关闭'}；"
                f"文件内容读取：{'开启' if result['reads_enabled'] else '默认需批准'}")
     typer.echo("下一步：")
@@ -244,6 +268,15 @@ def config_show() -> None:
     """显示当前配置（不会显示任何凭据）。"""
     _, cfg = _layout_and_config()
     typer.echo(cfg.model_dump_json(indent=2, exclude_none=True))
+
+
+@config_app.command("auto-purge")
+def config_auto_purge(enabled: bool = typer.Argument(..., help="true 开启 / false 关闭")) -> None:
+    """显式开启或关闭启动时的过期审计自动清理（默认 false）。"""
+    layout, cfg = _layout_and_config()
+    cfg.audit_auto_purge = enabled
+    save_config(cfg, layout)
+    typer.echo(f"审计自动清理已{'开启' if enabled else '关闭'}；保留期 {cfg.audit_retention_days} 天。")
 
 
 @config_app.command("allow-dir")
@@ -396,6 +429,7 @@ def task_demo() -> None:
 
 def main() -> None:
     """支持 `freeagent "任务描述"` 直接创建任务。"""
+    maybe_auto_purge()
     args = sys.argv[1:]
     if args and args[0] not in COMMANDS and not args[0].startswith("-"):
         sys.argv.insert(1, "run")

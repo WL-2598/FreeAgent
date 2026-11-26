@@ -65,6 +65,8 @@ freeagent doctor
 
 应显示「FreeAgent 自检：通过」、MCP 工具数 17、写入关闭。也可通过 MCP 调用 `fa_doctor` 得到同样结果。若有 FAIL，先按输出修复，不要继续测试。
 
+自检结果还包含 `connectors` 清单（manual/mock/web）与 `audit_retention_days`、`audit_auto_purge`；需要机器读取时用 `freeagent doctor --json`。清理过期审计默认只预览：`freeagent purge` **不删任何数据**，确认后加 `--apply` 才真正清理；自动清理默认关闭，只有显式执行 `freeagent config auto-purge true` 才会开启。
+
 ## 4. 配置 OpenClaw 复用用户已登录的 Chrome
 
 用户必须本人在场批准浏览器附加。
@@ -166,7 +168,7 @@ openclaw mcp doctor freeagent --probe
 
 ```bash
 cd /home/user/FreeAgent
-.venv/bin/python -m pytest -q        # 当前 61 项测试应全部通过
+.venv/bin/python -m pytest -q        # 当前 64 项测试应全部通过
 .venv/bin/python -m freeagent.cli task-demo   # 离线任务级演示
 freeagent history                    # 查看审计
 ```

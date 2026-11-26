@@ -28,6 +28,7 @@ from .errors import ConnectorError, FreeAgentError, PolicyError, ToolError
 from .orchestrator import time_limit
 from .policy import Policy
 from .protocol import MUTATING_ACTIONS, describe_action, validate_action
+from .retention import maybe_auto_purge
 from .security import log_text
 from .task_session import TaskSessions
 from .tool_meta import policy_for, policy_summary
@@ -356,6 +357,7 @@ def build_server() -> Any:
 def main() -> None:
     """stdio 入口：由 OpenClaw / 其他 MCP 客户端以子进程启动。"""
     logging.basicConfig(level=logging.WARNING, stream=__import__("sys").stderr)
+    maybe_auto_purge()
     build_server().run(transport="stdio")
 
 

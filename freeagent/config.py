@@ -44,6 +44,8 @@ class Config(BaseModel):
     model_timeout_seconds: int = Field(default=0, ge=0, description="0 表示不超时（手工粘贴需要）")
     parse_retries: int = Field(default=2, ge=0, le=5)
     audit_retention_days: int = Field(default=90, ge=1, le=3650)
+    # 默认关闭：自动清理会删除本地审计，必须由用户显式开启。
+    audit_auto_purge: bool = Field(default=False, description="启动时自动清理超过保留期的审计（需显式开启）")
     deny_names: list[str] = Field(
         default_factory=lambda: sorted(DEFAULT_DENY_NAMES),
         description="额外拒绝的文件名（默认规则永远生效，不可移除）",

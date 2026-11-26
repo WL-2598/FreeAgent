@@ -74,6 +74,18 @@ def run_doctor(config: Config | None = None, layout: Layout | None = None) -> di
     checks.append(Check("手动连接器", manual.available, manual.detail))
     checks.append(Check("网页自动化默认禁用", not web.available, web.status))
 
+    connectors: list[dict[str, Any]] = []
+    for connector_id in ("manual", "mock", "web"):
+        connector = resolve_connector(connector_id)
+        health = connector.health()
+        connectors.append({
+            "id": connector.id,
+            "label": connector.label,
+            "available": health.available,
+            "status": health.status,
+            "detail": health.detail,
+        })
+
     deny_total = len(set(cfg.deny_names)) + len(set(cfg.deny_suffixes))
     rules_total = sum(len(v.get("deny_names", [])) + len(v.get("deny_suffixes", [])) for v in cfg.workspace_rules.values())
     checks.append(Check("路径拒绝规则", True, f"全局 {deny_total} 条，工作区额外 {rules_total} 条"))
@@ -94,7 +106,10 @@ def run_doctor(config: Config | None = None, layout: Layout | None = None) -> di
     return {
         "ok": ok,
         "checks": [asdict(item) for item in checks],
+        "connectors": connectors,
         "workspace": str(workspace),
+        "audit_retention_days": cfg.audit_retention_days,
+        "audit_auto_purge": cfg.audit_auto_purge,
         "tool_count": len(TOOL_POLICY),
         "write_enabled": os.environ.get("FREEAGENT_MCP_ALLOW_WRITE", "0").strip().lower() in {"1", "true", "yes", "on"},
         "reads_enabled": os.environ.get("FREEAGENT_MCP_ALLOW_READS", "0").strip().lower() in {"1", "true", "yes", "on"},

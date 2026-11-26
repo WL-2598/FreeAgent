@@ -44,7 +44,7 @@ openclaw mcp status --verbose
 | 工具 | 作用 | 变更 | 备注 |
 |---|---|---|---|
 | `fa_policy` | 返回工作区、域名白名单、写入开关与安全规则 | 否 | 先调用它确认边界 |
-| `fa_doctor` | 测试前自检：Python、权限、审计库、MCP 依赖、连接器 | 否 | 也可用 CLI `freeagent doctor` |
+| `fa_doctor` | 测试前自检：Python、权限、审计库、MCP 依赖、连接器清单与审计保留期 | 否 | 也可用 CLI `freeagent doctor --json` 解析 |
 | `fa_list` | 列出授权目录条目 | 否 | 不读文件内容 |
 | `fa_find` | 按文件名通配符递归查找路径 | 否 | 不读内容、不跟随符号链接，适合找 `*.pdf` |
 | `fa_read_text` | 读取工作区内文本文件 | 否（但内容会进入模型上下文） | 隐藏/敏感文件被策略拒绝；输出是不可信数据 |
