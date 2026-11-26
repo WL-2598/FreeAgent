@@ -2,14 +2,16 @@
 
 FreeAgent 保留全部安全决策：提示词、单步动作、策略校验、预览批准、执行与审计。
 会话状态保存在已有 tasks 表中，刷新/重启后仍可用 `fa_task_status` 查看历史；
-批准令牌仅存内存，服务重启即失效，需要重新 reply 获取。
+批准令牌只把哈希写入 SQLite（明文不落盘），重启后仍在有效期内可批准，用过即失效。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
+import time
 from typing import Any
 
 from .audit import AuditLog
@@ -55,7 +57,10 @@ class TaskSessions:
             allow_reads = os.environ.get("FREEAGENT_MCP_ALLOW_READS", "0").strip().lower() in TRUE_VALUES
         self.allow_write = allow_write
         self.allow_reads = allow_reads  # 显式授权后可在只读流程里读取文件内容
-        self._approval_codes: dict[str, str] = {}
+        try:
+            self.approval_ttl = max(30, min(3600, int(os.environ.get("FREEAGENT_MCP_TOKEN_TTL", "300"))))
+        except ValueError:
+            self.approval_ttl = 300
 
     # ---- public API ----
 
@@ -143,8 +148,12 @@ class TaskSessions:
             needs_confirmation = False
 
         if needs_confirmation:
-            token = secrets.token_urlsafe(12)
-            self._approval_codes[task_id] = token
+            token = secrets.token_urlsafe(18)
+            self.audit.put_approval(
+                task_id,
+                hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                time.time() + self.approval_ttl,
+            )
             self.audit.update_task(
                 task_id,
                 status="awaiting_approval",
@@ -185,10 +194,17 @@ class TaskSessions:
             return self._error(f"任务不存在：{task_id}")
         if task["status"] != "awaiting_approval":
             return self._error(f"任务状态为 {task['status']}，没有待批准动作")
-        expected = self._approval_codes.get(task_id)
-        if not expected or not secrets.compare_digest(expected, approval_token):
-            return self._error("批准令牌无效；动作仍未执行。请重新查看预览并获取正确令牌")
-        self._approval_codes.pop(task_id, None)
+        record = self.audit.get_approval(task_id)
+        supplied_hash = hashlib.sha256(approval_token.encode("utf-8")).hexdigest()
+        if record is None:
+            return self._error("没有待批准的令牌；动作仍未执行")
+        if time.time() > float(record["expires_at"]):
+            self.audit.delete_approval(task_id)
+            return self._error("批准令牌已过期；请重新 fa_task_reply 获取令牌")
+        # 输错令牌不应烧掉正确令牌；只有过期或成功使用才清除。
+        if not secrets.compare_digest(str(record["token_hash"]), supplied_hash):
+            return self._error("批准令牌无效；动作仍未执行")
+        self.audit.delete_approval(task_id)  # 一次性：先消费令牌再执行
         try:
             action = parse_action(task["pending_action"] or "")
             if action.action in MUTATING_ACTIONS and not self.allow_write:
@@ -225,7 +241,7 @@ class TaskSessions:
             return self._error(f"任务不存在：{task_id}")
         if task["status"] != "awaiting_approval":
             return self._error("当前没有待批准动作")
-        self._approval_codes.pop(task_id, None)
+        self.audit.delete_approval(task_id)
         self.audit.append_action(task_id, int(task["step"]), task["pending_action"] or "", "rejected_user", "用户拒绝执行")
         self._finish(task_id, "cancelled", summary="用户拒绝了拟执行动作", clear_pending=True)
         return {"ok": True, "status": "cancelled", "note": "未执行任何变更"}
@@ -233,9 +249,13 @@ class TaskSessions:
     def cancel(self, task_id: str) -> dict[str, Any]:
         if self._task(task_id) is None:
             return self._error(f"任务不存在：{task_id}")
-        self._approval_codes.pop(task_id, None)
+        self.audit.delete_approval(task_id)
         self._finish(task_id, "cancelled", summary="用户取消任务", clear_pending=True)
         return {"ok": True, "status": "cancelled"}
+
+    def list(self, limit: int = 20) -> dict[str, Any]:
+        rows = [row for row in self.audit.list_tasks(limit) if row["connector"] == "mcp-task"]
+        return {"ok": True, "tasks": rows}
 
     def status(self, task_id: str) -> dict[str, Any]:
         task = self._task(task_id)

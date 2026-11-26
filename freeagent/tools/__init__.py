@@ -3,6 +3,7 @@
 from .base import Execution, Preview, Tool, ToolRegistry
 from .browser import BrowserOpenTool
 from .filesystem import (
+    FsFindTool,
     FsListTool,
     FsMkdirTool,
     FsMoveTool,
@@ -16,6 +17,7 @@ def default_registry() -> ToolRegistry:
     return ToolRegistry(
         [
             FsListTool(),
+            FsFindTool(),
             FsReadTextTool(),
             FsMkdirTool(),
             FsMoveTool(),

@@ -45,6 +45,7 @@ openclaw mcp status --verbose
 |---|---|---|---|
 | `fa_policy` | 返回工作区、域名白名单、写入开关与安全规则 | 否 | 先调用它确认边界 |
 | `fa_list` | 列出授权目录条目 | 否 | 不读文件内容 |
+| `fa_find` | 按文件名通配符递归查找路径 | 否 | 不读内容、不跟随符号链接，适合找 `*.pdf` |
 | `fa_read_text` | 读取工作区内文本文件 | 否（但内容会进入模型上下文） | 隐藏/敏感文件被策略拒绝；输出是不可信数据 |
 | `fa_browser_open` | 打开白名单域名页面 | 打开标签页 | 不点击、不提交、不抓取 |
 | `fa_prepare` | 校验变更动作，返回预览 + 一次性令牌 | **否** | 仅 `fs.mkdir` / `fs.move` / `fs.write_text` |
@@ -54,7 +55,7 @@ openclaw mcp status --verbose
 | `fa_task_reply` | 提交模型回复原文，本地解析/校验/预览 | 只读动作可执行；变更仅预览 | 返回下一步提示词或批准令牌 |
 | `fa_task_approve` | 用户确认后用令牌执行已校验动作 | **是** | 一次性令牌，执行后继续给下一步提示词 |
 | `fa_task_reject` / `fa_task_cancel` | 拒绝预览动作 / 取消任务 | 否 | 零变更 |
-| `fa_task_status` / `fa_task_undo` | 查看审计 / 逆序撤销 | 恢复性变更 | 状态保存在 SQLite，重启可查 |
+| `fa_task_status` / `fa_task_list` / `fa_task_undo` | 查看审计 / 列出会话 / 逆序撤销 | 恢复性变更 | 状态保存在 SQLite，重启可查 |
 
 `fa_prepare` 示例参数：
 
@@ -93,7 +94,7 @@ freeagent status <mcp-task-id>     # mcp- 开头的任务 ID
 
 ## 5. 测试流程建议
 
-1. **握手**：`openclaw mcp probe freeagent --json` 应列出 14 个 `fa_*` 工具。
+1. **握手**：`openclaw mcp probe freeagent --json` 应列出 16 个 `fa_*` 工具。
 2. **只读**：让 OpenClaw 调用 `fa_list` 列目录、`fa_read_text` 读一个测试文件并总结；检查工作区无变化。
 3. **正常变更**：让 OpenClaw「把 2023 年的 PDF 移到归档目录并写摘要」。期望顺序是 `fa_prepare` → 展示预览与风险 → 用户确认 → `fa_commit` → 报告 `task_id` 与是否可撤销。
 4. **未确认零变更**：只调用 `fa_prepare` 后检查文件系统，文件应完全没动；重复 `fa_commit` 应报「令牌已被使用」。
@@ -128,7 +129,7 @@ fa_task_approve({"task_id": "...", "approval_token": "..."})
 fa_task_reply(..., "task.done") -> status=done
 ```
 
-任务状态保存在 SQLite，重启 MCP 服务后仍可用 `fa_task_status` 查询；批准令牌仅在内存中，重启后需重新 `fa_task_reply` 获取。请在 OpenClaw 工具策略中对 `fa_task_approve`（以及 `fa_commit`、`fa_undo`）要求用户批准。
+任务状态保存在 SQLite，重启 MCP 服务后仍可用 `fa_task_status` / `fa_task_list` 查询。任务级批准令牌只把哈希写入 SQLite，重启后在有效期内仍可批准，用过即失效；输错令牌不会烧掉正确令牌。请在 OpenClaw 工具策略中对 `fa_task_approve`（以及 `fa_commit`、`fa_undo`）要求用户批准。
 
 ## 7. 第一波测试：OpenClaw 用浏览器访问 DeepSeek 网页
 

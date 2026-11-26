@@ -43,7 +43,7 @@ freeagent config allow-domain example.org   # 域名白名单
 
 ## 接入 OpenClaw
 
-FreeAgent 提供 stdio MCP 服务器（`pip install -e '.[mcp]'`），OpenClaw 可直接挂载白名单工具。零散变更用 `fa_prepare` → 预览/批准 → `fa_commit` 两阶段；完整任务用 `fa_task_start` → `fa_task_reply`（提交网页模型回复）→ `fa_task_approve`（用户确认）→ 继续 reply，直到完成，并可 `fa_task_status` / `fa_task_undo`。默认只读，令牌一次性且绑定动作参数；状态保存在本地 SQLite。完整注册命令、工具表、安全配置与测试流程见 [docs/OPENCLAW.md](docs/OPENCLAW.md)；可直接发给另一个智能体的配置说明见 [docs/OPENCLAW-SETUP-FOR-CLAUDE.md](docs/OPENCLAW-SETUP-FOR-CLAUDE.md)。
+FreeAgent 提供 stdio MCP 服务器（`pip install -e '.[mcp]'`），OpenClaw 可直接挂载白名单工具。零散变更用 `fa_prepare` → 预览/批准 → `fa_commit` 两阶段；完整任务用 `fa_task_start` → `fa_task_reply`（提交网页模型回复）→ `fa_task_approve`（用户确认）→ 继续 reply，直到完成，并可 `fa_task_status` / `fa_task_list` / `fa_task_undo`；另有 `fa_find` 可按文件名安全定位文件。默认只读，令牌一次性且绑定动作参数（任务级令牌只存哈希，重启后仍可在有效期内批准）；状态保存在本地 SQLite。完整注册命令、工具表、安全配置与测试流程见 [docs/OPENCLAW.md](docs/OPENCLAW.md)；可直接发给另一个智能体的配置说明见 [docs/OPENCLAW-SETUP-FOR-CLAUDE.md](docs/OPENCLAW-SETUP-FOR-CLAUDE.md)。
 
 ## 动作协议（节选）
 

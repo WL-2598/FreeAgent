@@ -75,6 +75,12 @@ class AuditLog:
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS undo_task ON undo_records(task_id, applied, id);
+                CREATE TABLE IF NOT EXISTS approval_tokens (
+                    task_id TEXT PRIMARY KEY,
+                    token_hash TEXT NOT NULL,
+                    expires_at REAL NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -179,6 +185,28 @@ class AuditLog:
     def mark_undo_applied(self, undo_id: int) -> None:
         with self._connect() as conn:
             conn.execute("UPDATE undo_records SET applied=1 WHERE id=?", (undo_id,))
+
+    # ---- approval tokens (只存哈希，重启后仍可校验且不会泄露明文令牌) ----
+
+    def put_approval(self, task_id: str, token_hash: str, expires_at: float) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO approval_tokens (task_id, token_hash, expires_at, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (task_id, token_hash, expires_at, utcnow()),
+            )
+
+    def get_approval(self, task_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT token_hash, expires_at FROM approval_tokens WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def delete_approval(self, task_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM approval_tokens WHERE task_id=?", (task_id,))
 
     # ---- readable log ----
 

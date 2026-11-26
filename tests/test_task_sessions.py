@@ -119,6 +119,22 @@ def test_explicit_read_flag_allows_file_content_in_read_only_flow(env: Env) -> N
     assert "hello from file" in result["next_prompt"]
 
 
+def test_approval_token_survives_service_restart_until_used(env: Env) -> None:
+    first = sessions(env)
+    task_id = first.start("重启后批准测试")["task_id"]
+    pending = first.reply(
+        task_id, action("fs.write_text", path="after-restart.txt", content="ok")
+    )
+    token = pending["approval_token"]
+    assert not (env.workspace / "after-restart.txt").exists()
+
+    restarted = sessions(env)  # 模拟 MCP 服务进程重启
+    approved = restarted.approve(task_id, token)
+    assert approved["status"] == "awaiting_model"
+    assert (env.workspace / "after-restart.txt").read_text() == "ok"
+    assert restarted.approve(task_id, token)["ok"] is False  # 一次性
+
+
 def test_task_state_survives_new_session_instance(env: Env) -> None:
     first = sessions(env)
     task_id = first.start("跨实例状态测试")["task_id"]

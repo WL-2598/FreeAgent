@@ -45,15 +45,15 @@ openclaw mcp doctor freeagent --probe
 openclaw mcp probe freeagent --json
 ```
 
-预期：列出 14 个 `fa_*` 工具。若工具列表为空，检查 OpenClaw 工具档位不是 `minimal`（使用 `coding` 或 `messaging`）。
+预期：列出 16 个 `fa_*` 工具。若工具列表为空，检查 OpenClaw 工具档位不是 `minimal`（使用 `coding` 或 `messaging`）。
 
 **此时不要开启写入。** 先限制为只读工具：
 
 ```bash
-openclaw mcp tools freeagent --include 'fa_policy,fa_list,fa_read_text,fa_browser_open,fa_task_start,fa_task_reply,fa_task_status,fa_task_cancel,fa_task_reject,fa_task_undo'
+openclaw mcp tools freeagent --include 'fa_policy,fa_list,fa_find,fa_read_text,fa_browser_open,fa_task_start,fa_task_reply,fa_task_list,fa_task_status,fa_task_cancel,fa_task_reject,fa_task_undo'
 ```
 
-注意：`fa_task_reply` 遇到 `fs.list` 会直接执行；空目录现在会返回明确的「空目录，共 0 项」观察结果，避免模型反复列目录。变更动作只会预览，不会执行；即使误调批准工具，只读配置下写入也会被拒绝。
+注意：`fa_task_reply` 遇到 `fs.list` / `fs.find` 会直接执行（按文件名找文件用 `fs.find`，例如 `*.pdf`）；空目录现在会返回明确的「空目录，共 0 项」观察结果，避免模型反复列目录。变更动作只会预览，不会执行；即使误调批准工具，只读配置下写入也会被拒绝。
 
 如果第一波任务需要读取文件内容，但不想开启写入，可以在注册 MCP 时显式加入 `FREEAGENT_MCP_ALLOW_READS=1`（只对 `fs.read_text` 生效，不打开写入）；否则 `fs.read_text` 会停在 `awaiting_approval`。
 
@@ -108,7 +108,7 @@ openclaw browser --browser-profile openclaw snapshot --format ai
    - 若返回 `awaiting_model` 且含 `next_prompt`，把下一轮提示词发给 DeepSeek，继续循环。
    - 若返回 `awaiting_approval`，说明模型提出了变更动作：**停止，向用户展示 preview 与 risk，等待用户明确批准**。
    - 若返回 `ok=false` 或 `blocked`，向用户报告原因，不要自行修改策略或重试更高权限操作。
-5. 模型返回 `task.done` 后，调用 `fa_task_status(task_id)` 展示审计摘要给用户。
+5. 模型返回 `task.done` 后，调用 `fa_task_status(task_id)` 展示审计摘要给用户；用 `fa_task_list` 可列出所有任务级会话。
 
 验收标准：工作区文件没有新增、修改或移动；终端 `freeagent history` 里能看到该任务与每一步动作。
 

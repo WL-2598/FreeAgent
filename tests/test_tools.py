@@ -68,6 +68,27 @@ def test_move_never_overwrites(env: Env) -> None:
     assert (env.workspace / "b.txt").read_text() == "b"
 
 
+def test_find_tool_locates_files_without_reading_content(env: Env) -> None:
+    docs = env.workspace / "docs"
+    docs.mkdir()
+    (docs / "report-2024.pdf").write_bytes(b"pdf")
+    (docs / "note.txt").write_text("secret text")
+    (docs / ".hidden.pdf").write_bytes(b"hidden")
+    (env.workspace / "outside-link.pdf").symlink_to("/etc/passwd")
+
+    _, found = run_tool(env, action("fs.find", path=".", pattern="*.pdf"))
+    assert "docs/report-2024.pdf" in found.output
+    assert "note.txt" not in found.output
+    assert ".hidden.pdf" not in found.output
+    assert "outside-link.pdf" not in found.output  # 不跟随/返回符号链接
+
+    _, empty = run_tool(env, action("fs.find", path=".", pattern="*.docx"))
+    assert "没有匹配" in empty.output
+
+    with pytest.raises(ToolError):
+        run_tool(env, action("fs.find", path=".", pattern="../*.pdf"))
+
+
 def test_empty_directory_gives_explicit_observation(env: Env) -> None:
     _, listed = run_tool(env, action("fs.list", path="."))
     assert "空目录" in listed.output

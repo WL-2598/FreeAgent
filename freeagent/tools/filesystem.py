@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import shutil
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from ..config import Config
 from ..errors import PolicyError, ToolError
 from ..policy import Policy
-from ..protocol import Action, FsList, FsMkdir, FsMove, FsReadText, FsWriteText
+from ..protocol import Action, FsFind, FsList, FsMkdir, FsMove, FsReadText, FsWriteText
 from ..security import log_text, truncate
 from ..utils import atomic_write_text
 from .base import Execution, Preview
@@ -52,6 +53,64 @@ class FsListTool:
         # 反复重复 fs.list（实测过的空转场景）。
         output = "\n".join(lines) if lines else f"（空目录，共 0 项：{target}）"
         return Execution(output, f"列出 {len(entries)} 项：{target}")
+
+
+class FsFindTool:
+    """按文件名/相对路径递归查找，不读取内容，不跟随符号链接。"""
+
+    name = "fs.find"
+
+    @staticmethod
+    def _pattern(action: Action) -> str:
+        assert isinstance(action, FsFind)
+        pattern = action.arguments.pattern.strip()
+        if not pattern or pattern.startswith("/") or ".." in PurePosixPath(pattern).parts:
+            raise ToolError("搜索模式必须为相对通配符，且不能包含 '..'")
+        return pattern
+
+    def preview(self, action: Action, policy: Policy) -> Preview:
+        assert isinstance(action, FsFind)
+        target = policy.path(action.arguments.path, "list")
+        return Preview(
+            [
+                f"在 {target} 内查找文件名匹配 {self._pattern(action)!r} 的文件",
+                f"最多返回 {action.arguments.max_results} 条路径，不读取文件内容",
+            ],
+            [str(target)],
+            "低（只返回路径）",
+        )
+
+    def execute(self, action: Action, policy: Policy, config: Config) -> Execution:
+        assert isinstance(action, FsFind)
+        target = policy.path(action.arguments.path, "list")
+        pattern = self._pattern(action)
+        if not target.is_dir():
+            raise ToolError(f"搜索起点不是目录：{target}")
+        matches: list[str] = []
+        for dirpath, dirnames, filenames in os.walk(target, followlinks=False):
+            dirnames[:] = [
+                name for name in dirnames
+                if not name.startswith(".") and not (Path(dirpath) / name).is_symlink()
+            ]
+            for name in filenames:
+                if name.startswith("."):
+                    continue
+                full = Path(dirpath) / name
+                if full.is_symlink():
+                    continue
+                try:
+                    relative = full.relative_to(policy.workspace)
+                except ValueError:
+                    relative = full.relative_to(target)
+                if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(str(relative), pattern):
+                    matches.append(str(relative))
+                    if len(matches) >= action.arguments.max_results:
+                        break
+            if len(matches) >= action.arguments.max_results:
+                break
+        matches.sort()
+        output = "\n".join(matches) if matches else f"（没有匹配 {pattern!r} 的文件）"
+        return Execution(output, f"找到 {len(matches)} 个匹配 {pattern!r} 的文件")
 
 
 class FsReadTextTool:

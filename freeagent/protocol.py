@@ -26,6 +26,12 @@ class FsListArgs(StrictModel):
     path: str = Field(default=".", max_length=4096, description="相对工作区的目录")
 
 
+class FsFindArgs(StrictModel):
+    path: str = Field(default=".", max_length=4096, description="搜索起点（工作区内）")
+    pattern: str = Field(default="*", max_length=200, description="文件名通配符，例如 *.pdf")
+    max_results: int = Field(default=100, ge=1, le=500)
+
+
 class FsReadTextArgs(StrictModel):
     path: str = Field(max_length=4096)
     max_chars: int = Field(default=4000, ge=1, le=20_000)
@@ -61,6 +67,12 @@ class TaskBlockedArgs(StrictModel):
 class FsList(StrictModel):
     action: Literal["fs.list"] = "fs.list"
     arguments: FsListArgs = Field(default_factory=FsListArgs)
+    reason: str = Field(default="", max_length=300)
+
+
+class FsFind(StrictModel):
+    action: Literal["fs.find"] = "fs.find"
+    arguments: FsFindArgs = Field(default_factory=FsFindArgs)
     reason: str = Field(default="", max_length=300)
 
 
@@ -108,7 +120,7 @@ class TaskBlocked(StrictModel):
 
 Action = Annotated[
     Union[
-        FsList, FsReadText, FsMkdir, FsMove, FsWriteText, BrowserOpen, TaskDone, TaskBlocked
+        FsList, FsFind, FsReadText, FsMkdir, FsMove, FsWriteText, BrowserOpen, TaskDone, TaskBlocked
     ],
     Field(discriminator="action"),
 ]
@@ -119,11 +131,12 @@ MUTATING_ACTIONS = frozenset({"fs.mkdir", "fs.move", "fs.write_text"})
 CONFIRM_ACTIONS = frozenset(MUTATING_ACTIONS | {"fs.read_text", "browser.open"})
 TERMINAL_ACTIONS = frozenset({"task.done", "task.blocked"})
 TOOL_ACTIONS = frozenset(
-    {"fs.list", "fs.read_text", "fs.mkdir", "fs.move", "fs.write_text", "browser.open"}
+    {"fs.list", "fs.find", "fs.read_text", "fs.mkdir", "fs.move", "fs.write_text", "browser.open"}
 )
 
 TOOL_SPECS: dict[str, str] = {
     "fs.list": '{"action":"fs.list","arguments":{"path":"."},"reason":"..."}；列出目录条目，不读内容',
+    "fs.find": '{"action":"fs.find","arguments":{"path":".","pattern":"*.pdf","max_results":100},"reason":"..."}；按文件名递归查找，不读内容',
     "fs.read_text": '{"action":"fs.read_text","arguments":{"path":"相对路径","max_chars":4000},"reason":"..."}；需用户批准',
     "fs.mkdir": '{"action":"fs.mkdir","arguments":{"path":"相对路径"},"reason":"..."}；需用户批准',
     "fs.move": '{"action":"fs.move","arguments":{"source":"a.txt","destination":"归档/a.txt"},"reason":"..."}；需用户批准',
