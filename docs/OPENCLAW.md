@@ -154,6 +154,7 @@ fa_task_reply(..., "task.done") -> status=done
 - 想做细粒度过滤：每个 `fa_*` 工具都带 MCP 注解 `readOnlyHint` / `destructiveHint` / `openWorldHint`，例如只允许只读工具时可按 `readOnlyHint=true` 过滤；`fa_browser_open` 标记为 `openWorldHint=true`。
 - 工具列表为空：确认 OpenClaw 工具档位不是 `minimal`，并检查 `openclaw mcp tools freeagent --include ...`。
 - `Could not find DevToolsActivePort`：说明用户日常 Chrome 没有真正开启远程调试（Chrome 157 上开关位置可能变化）。不要反复切开关；直接改用隔离浏览器：`OPENCLAW_BROWSER_HEADLESS=0 openclaw browser --browser-profile openclaw start`，在打开的窗口里手动登录 DeepSeek，再用 `openclaw browser --browser-profile openclaw tabs` 验证。
+- Gateway 重启后托管浏览器消失：这是预期行为，登录态仍在 `openclaw` profile 中，无需重新登录。依次执行 `openclaw mcp reload`、`openclaw mcp doctor freeagent --probe`、`OPENCLAW_BROWSER_HEADLESS=0 openclaw browser --browser-profile openclaw start`，然后重新 `tabs`。**标签编号每次重启都会变**，不要复用旧编号，操作前一律以最新 `tabs` 结果为准。
 - `fa_prepare` 报「写入未启用」：重启 MCP 服务器时设置 `FREEAGENT_MCP_ALLOW_WRITE=1`。
 - 「令牌不存在」：服务器重启过或令牌已过期/已使用，重新 prepare。
 - 日志：MCP 服务器只向 stderr 输出诊断信息；stdout 保留给 JSON-RPC，不要在其中 `print`。
