@@ -130,7 +130,7 @@ fa_task_approve({"task_id": "...", "approval_token": "..."})
 fa_task_reply(..., "task.done") -> status=done
 ```
 
-任务状态保存在 SQLite，重启 MCP 服务后仍可用 `fa_task_status` / `fa_task_list` 查询；当状态为 `awaiting_model` 时，`fa_task_status` 会一并返回 `next_prompt`，可以直接发给网页模型续跑。每次提示词还会附带最近 8 条动作摘要和「不要重复已成功且结果未变化的动作」规则，减少网页模型空转。任务级批准令牌只把哈希写入 SQLite，重启后在有效期内仍可批准，用过即失效；输错令牌不会烧掉正确令牌。请在 OpenClaw 工具策略中对 `fa_task_approve`（以及 `fa_commit`、`fa_undo`）要求用户批准。
+任务状态保存在 SQLite，重启 MCP 服务后仍可用 `fa_task_status` / `fa_task_list` 查询；当状态为 `awaiting_model` 时，`fa_task_status` 会一并返回 `next_prompt`，可以直接发给网页模型续跑。每次提示词还会附带最近 8 条动作摘要和「不要重复已成功且结果未变化的动作」规则，减少网页模型空转。若网页模型仍原样重复上一条已执行动作，本地会在 `fa_task_reply` 阶段直接拦截并返回修正提示词，不消耗任务步骤、不执行任何动作。任务级批准令牌只把哈希写入 SQLite，重启后在有效期内仍可批准，用过即失效；输错令牌不会烧掉正确令牌。请在 OpenClaw 工具策略中对 `fa_task_approve`（以及 `fa_commit`、`fa_undo`）要求用户批准。
 
 ## 7. 第一波测试：OpenClaw 用浏览器访问 DeepSeek 网页
 

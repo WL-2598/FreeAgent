@@ -158,6 +158,23 @@ def test_task_state_survives_new_session_instance(env: Env) -> None:
     assert not (env.workspace / "fresh").exists()
 
 
+def test_duplicate_action_is_blocked_locally(env: Env) -> None:
+    service = sessions(env)
+    task_id = service.start("防重复测试")["task_id"]
+    reply = action("fs.list", path=".")
+    first = service.reply(task_id, reply)
+    assert first["status"] == "awaiting_model"
+
+    duplicate = service.reply(task_id, reply)
+    assert duplicate["ok"] is False
+    assert "重复动作" in duplicate["error"]
+    assert service.status(task_id)["step"] == 1  # 没有消耗新步骤
+    assert len(service.status(task_id)["actions"]) == 1
+
+    done = service.reply(task_id, action("task.done", summary="换动作后完成"))
+    assert done["status"] == "done"
+
+
 def test_status_returns_next_prompt_for_cross_process_resume(env: Env) -> None:
     service = sessions(env)
     task_id = service.start("续跑测试")["task_id"]

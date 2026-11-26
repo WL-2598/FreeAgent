@@ -109,6 +109,30 @@ class TaskSessions:
                 "note": "未执行任何动作；可让模型修正后再次调用 fa_task_reply。",
             }
 
+        # 本地确定性防重复：如果网页模型原样重复上一条已执行动作，且我们已经
+        # 把它的结果回传给模型，就不再执行第二次，直接要求它换动作或结束。
+        # 这比只靠提示词可靠，也不会修改任何文件。
+        action_json = action.model_dump_json()
+        previous = next(
+            (
+                row for row in reversed(self.audit.list_actions(task_id))
+                if row["decision"] in {"auto", "approved_mcp"}
+            ),
+            None,
+        )
+        if previous and previous["action"] == action_json and task["observation"]:
+            self.audit.update_task(task_id, rounds=rounds, error="重复动作已拦截，未执行")
+            return {
+                "ok": False,
+                "status": "awaiting_model",
+                "error": "重复动作已本地拦截：这与上一轮已执行的动作完全相同，未再次执行。",
+                "prompt": self._prompt(
+                    task_id,
+                    extra="你重复了上一轮已经执行并反馈结果的动作。请选择不同的下一步，或返回 task.done。",
+                ),
+                "note": "未执行任何动作，也未消耗新的任务步骤。",
+            }
+
         self.audit.update_task(task_id, step=step, rounds=rounds, error=None)
         summary = describe_action(action)
         self.audit.event(task_id, "model_action", {"action": summary, "step": step})
