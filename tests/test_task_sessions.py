@@ -40,10 +40,12 @@ def test_full_task_flow_with_approval_and_undo(env: Env) -> None:
     assert wrong["ok"] is False
     assert not (env.workspace / "summary.md").exists()
 
-    approved = service.approve(task_id, token)
+    approved = service.approve(task_id, token, approver="claude-test")
     assert approved["status"] == "awaiting_model"
     assert (env.workspace / "summary.md").read_text() == "# 摘要"
     assert approved["undo_available"] is True
+    assert approved["approver"] == "claude-test"
+    assert len(approved["preview_hash"]) == 64
     assert service.approve(task_id, token)["ok"] is False, "批准令牌必须一次性"
 
     finished = service.reply(task_id, action("task.done", summary="完成"))
@@ -51,6 +53,9 @@ def test_full_task_flow_with_approval_and_undo(env: Env) -> None:
     status = service.status(task_id)
     assert status["status"] == "done"
     assert [row["decision"] for row in status["actions"]] == ["auto", "pending", "approved_mcp", "auto"]
+    approved_row = next(row for row in status["actions"] if row["decision"] == "approved_mcp")
+    assert approved_row["approver"] == "claude-test"
+    assert approved_row["preview_hash"] == approved["preview_hash"]
 
     undone = service.undo(task_id)
     assert undone["ok"] and not (env.workspace / "summary.md").exists()

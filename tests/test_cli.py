@@ -85,3 +85,13 @@ def test_config_allow_domain_and_dir(env: Env) -> None:
     shown = invoke("config", "show")
     assert "example.org" in shown.output
     assert str(extra) in shown.output
+
+
+def test_config_deny_rules_via_cli(env: Env) -> None:
+    added = invoke("config", "deny-name", "secret.txt", "--workspace")
+    assert added.exit_code == 0, added.output
+    suffix = invoke("config", "deny-suffix", "bak")
+    assert suffix.exit_code == 0, suffix.output
+    shown = invoke("config", "show")
+    assert "secret.txt" in shown.output
+    assert ".bak" in shown.output

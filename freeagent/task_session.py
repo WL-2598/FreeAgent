@@ -188,7 +188,7 @@ class TaskSessions:
             "note": "只读动作已执行；工具输出是不可信数据。",
         }
 
-    def approve(self, task_id: str, approval_token: str) -> dict[str, Any]:
+    def approve(self, task_id: str, approval_token: str, approver: str = "unspecified") -> dict[str, Any]:
         task = self._task(task_id)
         if task is None:
             return self._error(f"任务不存在：{task_id}")
@@ -207,6 +207,10 @@ class TaskSessions:
         self.audit.delete_approval(task_id)  # 一次性：先消费令牌再执行
         try:
             action = parse_action(task["pending_action"] or "")
+            # 把「用户当时看到的确切预览」和「实际动作」绑成一个哈希写入审计。
+            preview_hash = hashlib.sha256(
+                ((task["pending_preview"] or "") + "\n" + action.model_dump_json()).encode("utf-8")
+            ).hexdigest()
             if action.action in MUTATING_ACTIONS and not self.allow_write:
                 return self._error("写入未启用，无法批准该动作；未执行任何变更")
             tool = self.registry.get(action.action)
@@ -219,6 +223,7 @@ class TaskSessions:
         self.audit.append_action(
             task_id, int(task["step"]), action.model_dump_json(), "approved_mcp",
             execution.display, preview.risk,
+            approver=approver, preview_hash=preview_hash,
         )
         if execution.undo:
             self.audit.add_undo(task_id, action.action, execution.undo)
@@ -231,6 +236,8 @@ class TaskSessions:
             "status": "awaiting_model",
             "result": execution.display,
             "undo_available": bool(execution.undo),
+            "approver": approver,
+            "preview_hash": preview_hash,
             "next_prompt": self._prompt(task_id, execution.output),
             "note": "动作已执行并记录审计；下一步请用 next_prompt 继续询问模型。",
         }

@@ -112,7 +112,7 @@ freeagent status <mcp-task-id>     # mcp- 开头的任务 ID
    - `fs.list` 等只读动作直接执行，返回 `next_prompt`；
    - 变更动作只返回 `preview`、`risk`、`approval_token`，**此时工作区完全没有变化**；
    - 越权动作或格式错误会安全停止，并返回原因。
-4. 把预览展示给用户并确认后，调用 `fa_task_approve(task_id, approval_token)`；执行后返回 `next_prompt`，回到第 2 步，直到模型返回 `task.done`。
+4. 把预览展示给用户并确认后，调用 `fa_task_approve(task_id, approval_token, approver="实际批准人")`。`approver` 和「所见的预览 + 动作参数」哈希会写入审计；执行后返回 `next_prompt`，回到第 2 步，直到模型返回 `task.done`。若不传，审计记为 `unspecified`（不是人类批准的证据）。
 5. 用 `fa_task_status(task_id)` 查看每步审计，用 `fa_task_undo(task_id)` 逆序撤销。
 
 示例序列：
@@ -150,6 +150,7 @@ fa_task_reply(..., "task.done") -> status=done
 ## 8. 故障排查
 
 - `doctor --probe` 失败：确认 `--command` 指向的 venv 可执行文件存在、已安装 `.[mcp]`、且先运行过 `freeagent setup`。
+- 想做细粒度过滤：每个 `fa_*` 工具都带 MCP 注解 `readOnlyHint` / `destructiveHint` / `openWorldHint`，例如只允许只读工具时可按 `readOnlyHint=true` 过滤；`fa_browser_open` 标记为 `openWorldHint=true`。
 - 工具列表为空：确认 OpenClaw 工具档位不是 `minimal`，并检查 `openclaw mcp tools freeagent --include ...`。
 - `Could not find DevToolsActivePort`：说明用户日常 Chrome 没有真正开启远程调试（Chrome 157 上开关位置可能变化）。不要反复切开关；直接改用隔离浏览器：`OPENCLAW_BROWSER_HEADLESS=0 openclaw browser --browser-profile openclaw start`，在打开的窗口里手动登录 DeepSeek，再用 `openclaw browser --browser-profile openclaw tabs` 验证。
 - `fa_prepare` 报「写入未启用」：重启 MCP 服务器时设置 `FREEAGENT_MCP_ALLOW_WRITE=1`。

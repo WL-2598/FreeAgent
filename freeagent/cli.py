@@ -161,6 +161,9 @@ def status(task_id: str = typer.Argument(..., help="任务 ID")) -> None:
     typer.echo("\n动作记录：")
     for action in audit.list_actions(task_id):
         typer.echo(f"  #{action['seq']} [{action['decision']}] {action['action']} -> {action['result']}")
+        if action.get("approver") or action.get("preview_hash"):
+            digest = (action.get("preview_hash") or "")[:12]
+            typer.echo(f"      批准人：{action.get('approver') or 'unspecified'} · 预览哈希：{digest}…")
     pending = task_record.get("pending_preview")
     if pending:
         typer.echo(f"\n待批准预览：\n{pending}")
@@ -222,6 +225,51 @@ def config_allow_dir(path: str = typer.Argument(..., help="要授权为只读的
         cfg.extra_roots.append(resolved)
         save_config(cfg, layout)
     typer.echo(f"已授权只读目录：{resolved}")
+
+
+@config_app.command("deny-name")
+def config_deny_name(
+    value: str = typer.Argument(..., help="要拒绝的文件名，例如 secrets.txt"),
+    workspace: bool = typer.Option(False, "--workspace", help="只作用于当前工作区"),
+) -> None:
+    """追加敏感文件名规则（默认规则不可移除，只能更严格）。"""
+    layout, cfg = _layout_and_config()
+    name = value.strip().lower()
+    if not name or "/" in name:
+        raise FreeAgentError("文件名格式无效")
+    if workspace:
+        key = str(Path(cfg.workspace).expanduser().resolve())
+        rules = cfg.workspace_rules.setdefault(key, {})
+        names = rules.setdefault("deny_names", [])
+        if name not in names:
+            names.append(name)
+    elif name not in cfg.deny_names:
+        cfg.deny_names.append(name)
+    save_config(cfg, layout)
+    typer.echo(f"已加入拒绝名单：{name}（{'仅当前工作区' if workspace else '全局'}）")
+
+
+@config_app.command("deny-suffix")
+def config_deny_suffix(
+    value: str = typer.Argument(..., help="要拒绝的后缀，例如 .bak"),
+    workspace: bool = typer.Option(False, "--workspace", help="只作用于当前工作区"),
+) -> None:
+    """追加敏感后缀规则（默认规则不可移除，只能更严格）。"""
+    layout, cfg = _layout_and_config()
+    suffix = value.strip().lower()
+    suffix = suffix if suffix.startswith(".") else "." + suffix
+    if len(suffix) < 2 or "/" in suffix:
+        raise FreeAgentError("后缀格式无效")
+    if workspace:
+        key = str(Path(cfg.workspace).expanduser().resolve())
+        rules = cfg.workspace_rules.setdefault(key, {})
+        suffixes = rules.setdefault("deny_suffixes", [])
+        if suffix not in suffixes:
+            suffixes.append(suffix)
+    elif suffix not in cfg.deny_suffixes:
+        cfg.deny_suffixes.append(suffix)
+    save_config(cfg, layout)
+    typer.echo(f"已加入拒绝后缀：{suffix}（{'仅当前工作区' if workspace else '全局'}）")
 
 
 @config_app.command("allow-domain")

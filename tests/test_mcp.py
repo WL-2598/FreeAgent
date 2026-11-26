@@ -74,7 +74,7 @@ def test_prepare_rejects_illegal_path_and_tool(env: Env) -> None:
 def test_mcp_stdio_handshake_and_tools(env: Env) -> None:
     pytest.importorskip("mcp")
 
-    async def run() -> tuple[set[str], str]:
+    async def run() -> tuple[dict[str, object], str]:
         from mcp import ClientSession
         from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -98,9 +98,10 @@ def test_mcp_stdio_handshake_and_tools(env: Env) -> None:
                 text = ""
                 for part in result.content:
                     text += getattr(part, "text", "") or ""
-                return {tool.name for tool in tools.tools}, text
+                return {tool.name: tool.annotations for tool in tools.tools}, text
 
-    names, text = asyncio.run(run())
+    annotations, text = asyncio.run(run())
+    names = set(annotations)
     expected = {
         "fa_policy", "fa_list", "fa_find", "fa_read_text", "fa_browser_open",
         "fa_prepare", "fa_commit", "fa_undo",
@@ -109,6 +110,18 @@ def test_mcp_stdio_handshake_and_tools(env: Env) -> None:
     }
     assert expected <= names
     assert "写入状态：关闭" in text
+    assert "工具策略提示" in text
+
+    def hint(name: str, field: str) -> bool:
+        ann = annotations[name]
+        return bool(getattr(ann, field))
+
+    assert hint("fa_list", "read_only_hint") is True
+    assert hint("fa_find", "read_only_hint") is True
+    assert hint("fa_task_approve", "destructive_hint") is True
+    assert hint("fa_commit", "destructive_hint") is True
+    assert hint("fa_browser_open", "open_world_hint") is True
+    assert hint("fa_undo", "destructive_hint") is True
 
 
 def test_mcp_stdio_task_level_flow(env: Env) -> None:
