@@ -337,7 +337,7 @@ def build_server() -> Any:
     def fa_task_list(limit: int = 20) -> str:
         return as_text(sessions.list(limit))
 
-    @server.tool(name="fa_task_status", annotations=hints("fa_task_status"), description="查看任务状态、每步动作、确认结果和审计摘要")
+    @server.tool(name="fa_task_status", annotations=hints("fa_task_status"), description="查看任务状态、每步动作、确认结果和审计摘要；awaiting_model 时附带 next_prompt，可跨进程续跑")
     def fa_task_status(task_id: str) -> str:
         return as_text(sessions.status(task_id))
 

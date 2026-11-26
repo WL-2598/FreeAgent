@@ -268,7 +268,7 @@ class TaskSessions:
         task = self._task(task_id)
         if task is None:
             return self._error(f"任务不存在：{task_id}")
-        return {
+        result: dict[str, Any] = {
             "ok": True,
             "task_id": task_id,
             "status": task["status"],
@@ -281,6 +281,10 @@ class TaskSessions:
             "actions": self.audit.list_actions(task_id),
             "undoable": len(self.audit.undos(task_id)),
         }
+        if task["status"] == "awaiting_model":
+            # 服务重启后也能从 status 直接拿到下一轮提示词，不必依赖上次返回值。
+            result["next_prompt"] = self._prompt(task_id)
+        return result
 
     def undo(self, task_id: str) -> dict[str, Any]:
         if self._task(task_id) is None:
@@ -322,6 +326,7 @@ class TaskSessions:
             step=int(task["step"]) + 1,
             max_steps=self.config.max_steps,
             round_index=int(task["rounds"]) + 1,
+            history=self.audit.list_actions(task_id),
         )
         return prompt + ("\n\n" + extra if extra else "")
 

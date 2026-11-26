@@ -236,6 +236,7 @@ class TaskRunner:
             prompt = build_prompt(
                 task["goal"], task["observation"] or "", self.policy,
                 step=step, max_steps=self.config.max_steps, round_index=rounds + 1,
+                history=self.audit.list_actions(task_id),
             )
             try:
                 raw = self._ask(prompt, task_id, step, rounds + 1, connector)

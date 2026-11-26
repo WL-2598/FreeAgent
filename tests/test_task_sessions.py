@@ -156,3 +156,17 @@ def test_task_state_survives_new_session_instance(env: Env) -> None:
     assert pending["status"] == "awaiting_approval"
     assert second.approve(task_id, "stale-token")["ok"] is False
     assert not (env.workspace / "fresh").exists()
+
+
+def test_status_returns_next_prompt_for_cross_process_resume(env: Env) -> None:
+    service = sessions(env)
+    task_id = service.start("续跑测试")["task_id"]
+    service.reply(task_id, action("fs.list", path="."))
+
+    status = service.status(task_id)
+    assert status["status"] == "awaiting_model"
+    assert "next_prompt" in status
+    assert "已执行动作摘要" in status["next_prompt"]
+
+    service.reply(task_id, action("task.done", summary="完成"))
+    assert "next_prompt" not in service.status(task_id)

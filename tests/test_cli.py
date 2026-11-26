@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 from freeagent import cli
+from freeagent.audit import AuditLog
 from freeagent.cli import app
 
 from .conftest import Env, action
@@ -95,3 +97,17 @@ def test_config_deny_rules_via_cli(env: Env) -> None:
     shown = invoke("config", "show")
     assert "secret.txt" in shown.output
     assert ".bak" in shown.output
+
+
+def test_purge_removes_old_audit_records(env: Env) -> None:
+    audit = AuditLog(env.layout)
+    audit.create_task("old-task", "old goal", "mcp", str(env.workspace))
+    with sqlite3.connect(env.layout.db_path) as conn:
+        conn.execute(
+            "UPDATE tasks SET created_at=? WHERE id=?",
+            ("2000-01-01T00:00:00+00:00", "old-task"),
+        )
+    result = invoke("purge", "--days", "1")
+    assert result.exit_code == 0, result.output
+    assert "已清理 1" in result.output
+    assert audit.get_task("old-task") is None

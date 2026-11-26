@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -127,3 +129,20 @@ def test_browser_open_uses_allowlist_only(env: Env, monkeypatch: pytest.MonkeyPa
     with pytest.raises(PolicyError):
         run_tool(env, action("browser.open", url="https://evil.example.org.evil.com/"))
     assert len(opened) == 1
+
+
+def test_write_undo_restores_mtime_and_mode(env: Env) -> None:
+    target = env.workspace / "tracked.txt"
+    target.write_text("original")
+    old_time = time.time() - 10_000
+    os.utime(target, (old_time, old_time))
+    os.chmod(target, 0o640)
+
+    _, updated = run_tool(env, action("fs.write_text", path="tracked.txt", content="changed", overwrite=True))
+    assert updated.undo is not None
+    assert updated.undo["previous_mtime"] == old_time
+
+    undo_change(updated.undo, env.config, Policy(env.config))
+    assert target.read_text() == "original"
+    assert abs(target.stat().st_mtime - old_time) < 1
+    assert target.stat().st_mode & 0o777 == 0o640

@@ -232,10 +232,12 @@ class FsWriteTextTool:
             raise ToolError(f"写入内容超过单文件大小上限 {config.max_file_bytes} 字节")
         previous: str | None = None
         previous_mode = 0o644
+        previous_mtime: float | None = None
         if target.exists():
             try:
                 stat = target.stat()
                 previous_mode = stat.st_mode & 0o777
+                previous_mtime = stat.st_mtime
                 if stat.st_size <= config.max_file_bytes:
                     previous = target.read_text(encoding="utf-8", errors="replace")
             except OSError as exc:
@@ -255,6 +257,7 @@ class FsWriteTextTool:
                 "path": str(target),
                 "previous_content": previous,
                 "previous_mode": previous_mode,
+                "previous_mtime": previous_mtime,
             },
         )
 
@@ -285,5 +288,8 @@ def undo_change(record: dict, config: Config, policy: Policy) -> str:
             target.unlink(missing_ok=True)
             return f"已删除新建文件：{target}"
         atomic_write_text(target, previous, mode=int(record.get("previous_mode", 0o644)))
-        return f"已恢复原内容：{target}"
+        previous_mtime = record.get("previous_mtime")
+        if isinstance(previous_mtime, (int, float)):
+            os.utime(target, (float(previous_mtime), float(previous_mtime)))
+        return f"已恢复原内容与时间戳：{target}"
     raise ToolError(f"未知的撤销记录类型：{kind}")

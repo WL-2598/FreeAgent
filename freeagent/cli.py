@@ -29,7 +29,7 @@ app.add_typer(config_app, name="config")
 
 COMMANDS = {
     "setup", "models", "login", "run", "approve", "reject", "status",
-    "cancel", "undo", "history", "demo", "task-demo", "mcp", "config", "--help", "-h",
+    "cancel", "undo", "history", "purge", "demo", "task-demo", "mcp", "config", "--help", "-h",
 }
 
 
@@ -207,6 +207,17 @@ def mcp() -> None:
     from .mcp_server import main as mcp_main
 
     mcp_main()
+
+
+@app.command()
+def purge(
+    days: Optional[int] = typer.Option(None, "--days", min=1, help="保留天数，默认取配置 audit_retention_days"),
+) -> None:
+    """清理超过保留期的本地任务与审计记录（仅本机）。"""
+    layout, cfg = _layout_and_config()
+    keep = days or cfg.audit_retention_days
+    removed = AuditLog(layout).purge_old(keep)
+    typer.echo(f"已清理 {removed} 个早于 {keep} 天的任务及其动作、撤销与审计记录。")
 
 
 @config_app.command("show")
