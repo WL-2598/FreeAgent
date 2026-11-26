@@ -101,6 +101,20 @@ openclaw browser --browser-profile openclaw snapshot --format ai
 - 成功标准：`status` 显示 profile 为 `openclaw` 且 `running: true`，`tabs` 里有 DeepSeek 页面，`snapshot` 能读到页面文本。
 - 后续浏览器操作显式指定 `profile="openclaw"`。FreeAgent MCP 的 `fa_*` 工具照常使用。
 
+### 4.2 Gateway 重启后的浏览器恢复（每次重启都要做）
+
+OpenClaw Gateway 重启会连带停掉托管的 `openclaw` 浏览器，但**登录态保存在 profile 里，不需要重新登录**。恢复顺序：
+
+```bash
+openclaw mcp reload
+openclaw mcp doctor freeagent --probe
+OPENCLAW_BROWSER_HEADLESS=0 openclaw browser --browser-profile openclaw start
+openclaw browser --browser-profile openclaw status
+openclaw browser --browser-profile openclaw tabs
+```
+
+关键：**标签编号每次都会变**。不要在脚本或记忆里硬编码上一次的 tab 编号；每次 `snapshot` / 输入前都先运行 `tabs`，用当次返回的编号。若 `status` 不是 `running: true`，先重新 `start`；若 `tabs` 里没有 DeepSeek，请用户本人打开页面或重新登录，不要绕过验证。
+
 路线 B（Chrome 扩展配对）需要修复扩展目录权限，只在这两条路都走不通、且用户明确要求控制已登录 Chrome 时再考虑。
 
 ## 5. 第一波任务：只读闭环（必须先做）
@@ -152,7 +166,7 @@ openclaw mcp doctor freeagent --probe
 
 ```bash
 cd /home/user/FreeAgent
-.venv/bin/python -m pytest -q        # 44 项测试应全部通过
+.venv/bin/python -m pytest -q        # 当前 61 项测试应全部通过
 .venv/bin/python -m freeagent.cli task-demo   # 离线任务级演示
 freeagent history                    # 查看审计
 ```
@@ -174,6 +188,7 @@ freeagent history                    # 查看审计
 - 工具列表为空：检查工具档位和 `openclaw mcp tools freeagent --include ...`。
 - 批准令牌无效/不存在：令牌一次性或服务器重启后失效，重新走 `fa_task_reply` 或 `fa_prepare` 获取。
 - 浏览器附加失败：用户需在 Chrome 开启远程调试并批准连接提示；不要改配置去绕过。
+- Gateway 重启后浏览器窗口消失或 `tabs` 编号对不上：按 4.2 节重新 `start` 并重新 `tabs`，不要复用旧编号，也不需要重新登录。
 
 ## 10. 完成时向用户报告
 
