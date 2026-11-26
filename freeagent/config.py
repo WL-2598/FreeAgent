@@ -15,6 +15,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from .errors import ConfigError
 from .utils import atomic_write_text
 
+# 默认拒绝的名称/后缀；用户只能追加规则，不能移除这些默认值。
+DEFAULT_DENY_NAMES = frozenset(
+    {
+        ".env", ".env.local", ".npmrc", ".pypirc", ".netrc", ".htpasswd",
+        "id_rsa", "id_ed25519", "id_ecdsa", "credentials", "credentials.json",
+        "authorized_keys", "shadow", "passwd",
+    }
+)
+DEFAULT_DENY_SUFFIXES = frozenset({".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"})
+
 
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -34,6 +44,18 @@ class Config(BaseModel):
     model_timeout_seconds: int = Field(default=0, ge=0, description="0 表示不超时（手工粘贴需要）")
     parse_retries: int = Field(default=2, ge=0, le=5)
     audit_retention_days: int = Field(default=90, ge=1, le=3650)
+    deny_names: list[str] = Field(
+        default_factory=lambda: sorted(DEFAULT_DENY_NAMES),
+        description="额外拒绝的文件名（默认规则永远生效，不可移除）",
+    )
+    deny_suffixes: list[str] = Field(
+        default_factory=lambda: sorted(DEFAULT_DENY_SUFFIXES),
+        description="额外拒绝的后缀（默认规则永远生效，不可移除）",
+    )
+    workspace_rules: dict[str, dict[str, list[str]]] = Field(
+        default_factory=dict,
+        description="按工作区绝对路径追加 deny_names/deny_suffixes，只能更严格",
+    )
 
 
 class Layout:

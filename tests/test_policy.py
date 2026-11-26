@@ -66,3 +66,29 @@ def test_url_allowlist(env: Env) -> None:
     ):
         with pytest.raises(PolicyError):
             policy.url(bad)
+
+
+def test_configurable_deny_rules_can_only_tighten(env: Env) -> None:
+    cfg = env.config.model_copy(update={
+        "deny_names": ["secret.txt"],
+        "deny_suffixes": [".bak"],
+    })
+    policy = Policy(cfg)
+    for name in ("secret.txt", "notes.bak", ".env", "id_rsa", "server.pem"):
+        with pytest.raises(PolicyError):
+            policy.path(name, "read")
+
+
+def test_workspace_specific_deny_rules(env: Env) -> None:
+    cfg = env.config.model_copy(update={
+        "workspace_rules": {str(env.workspace): {"deny_names": ["local-only.txt"]}},
+    })
+    policy = Policy(cfg)
+    with pytest.raises(PolicyError):
+        policy.path("local-only.txt", "read")
+    assert policy.path("normal.txt", "read") == env.workspace / "normal.txt"
+
+    # 清空用户规则后，默认敏感名单仍然生效。
+    cleared = env.config.model_copy(update={"deny_names": [], "deny_suffixes": []})
+    with pytest.raises(PolicyError):
+        Policy(cleared).path(".env", "read")

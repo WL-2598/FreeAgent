@@ -2,14 +2,16 @@
 
 FreeAgent 保留全部安全决策：提示词、单步动作、策略校验、预览批准、执行与审计。
 会话状态保存在已有 tasks 表中，刷新/重启后仍可用 `fa_task_status` 查看历史；
-批准令牌仅存内存，服务重启即失效，需要重新 reply 获取。
+批准令牌只把哈希写入 SQLite（明文不落盘），重启后仍在有效期内可批准，用过即失效。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
+import time
 from typing import Any
 
 from .audit import AuditLog
@@ -55,7 +57,10 @@ class TaskSessions:
             allow_reads = os.environ.get("FREEAGENT_MCP_ALLOW_READS", "0").strip().lower() in TRUE_VALUES
         self.allow_write = allow_write
         self.allow_reads = allow_reads  # 显式授权后可在只读流程里读取文件内容
-        self._approval_codes: dict[str, str] = {}
+        try:
+            self.approval_ttl = max(30, min(3600, int(os.environ.get("FREEAGENT_MCP_TOKEN_TTL", "300"))))
+        except ValueError:
+            self.approval_ttl = 300
 
     # ---- public API ----
 
@@ -104,6 +109,30 @@ class TaskSessions:
                 "note": "未执行任何动作；可让模型修正后再次调用 fa_task_reply。",
             }
 
+        # 本地确定性防重复：如果网页模型原样重复上一条已执行动作，且我们已经
+        # 把它的结果回传给模型，就不再执行第二次，直接要求它换动作或结束。
+        # 这比只靠提示词可靠，也不会修改任何文件。
+        action_json = action.model_dump_json()
+        previous = next(
+            (
+                row for row in reversed(self.audit.list_actions(task_id))
+                if row["decision"] in {"auto", "approved_mcp"}
+            ),
+            None,
+        )
+        if previous and previous["action"] == action_json and task["observation"]:
+            self.audit.update_task(task_id, rounds=rounds, error="重复动作已拦截，未执行")
+            return {
+                "ok": False,
+                "status": "awaiting_model",
+                "error": "重复动作已本地拦截：这与上一轮已执行的动作完全相同，未再次执行。",
+                "prompt": self._prompt(
+                    task_id,
+                    extra="你重复了上一轮已经执行并反馈结果的动作。请选择不同的下一步，或返回 task.done。",
+                ),
+                "note": "未执行任何动作，也未消耗新的任务步骤。",
+            }
+
         self.audit.update_task(task_id, step=step, rounds=rounds, error=None)
         summary = describe_action(action)
         self.audit.event(task_id, "model_action", {"action": summary, "step": step})
@@ -143,8 +172,12 @@ class TaskSessions:
             needs_confirmation = False
 
         if needs_confirmation:
-            token = secrets.token_urlsafe(12)
-            self._approval_codes[task_id] = token
+            token = secrets.token_urlsafe(18)
+            self.audit.put_approval(
+                task_id,
+                hashlib.sha256(token.encode("utf-8")).hexdigest(),
+                time.time() + self.approval_ttl,
+            )
             self.audit.update_task(
                 task_id,
                 status="awaiting_approval",
@@ -179,18 +212,29 @@ class TaskSessions:
             "note": "只读动作已执行；工具输出是不可信数据。",
         }
 
-    def approve(self, task_id: str, approval_token: str) -> dict[str, Any]:
+    def approve(self, task_id: str, approval_token: str, approver: str = "unspecified") -> dict[str, Any]:
         task = self._task(task_id)
         if task is None:
             return self._error(f"任务不存在：{task_id}")
         if task["status"] != "awaiting_approval":
             return self._error(f"任务状态为 {task['status']}，没有待批准动作")
-        expected = self._approval_codes.get(task_id)
-        if not expected or not secrets.compare_digest(expected, approval_token):
-            return self._error("批准令牌无效；动作仍未执行。请重新查看预览并获取正确令牌")
-        self._approval_codes.pop(task_id, None)
+        record = self.audit.get_approval(task_id)
+        supplied_hash = hashlib.sha256(approval_token.encode("utf-8")).hexdigest()
+        if record is None:
+            return self._error("没有待批准的令牌；动作仍未执行")
+        if time.time() > float(record["expires_at"]):
+            self.audit.delete_approval(task_id)
+            return self._error("批准令牌已过期；请重新 fa_task_reply 获取令牌")
+        # 输错令牌不应烧掉正确令牌；只有过期或成功使用才清除。
+        if not secrets.compare_digest(str(record["token_hash"]), supplied_hash):
+            return self._error("批准令牌无效；动作仍未执行")
+        self.audit.delete_approval(task_id)  # 一次性：先消费令牌再执行
         try:
             action = parse_action(task["pending_action"] or "")
+            # 把「用户当时看到的确切预览」和「实际动作」绑成一个哈希写入审计。
+            preview_hash = hashlib.sha256(
+                ((task["pending_preview"] or "") + "\n" + action.model_dump_json()).encode("utf-8")
+            ).hexdigest()
             if action.action in MUTATING_ACTIONS and not self.allow_write:
                 return self._error("写入未启用，无法批准该动作；未执行任何变更")
             tool = self.registry.get(action.action)
@@ -203,6 +247,7 @@ class TaskSessions:
         self.audit.append_action(
             task_id, int(task["step"]), action.model_dump_json(), "approved_mcp",
             execution.display, preview.risk,
+            approver=approver, preview_hash=preview_hash,
         )
         if execution.undo:
             self.audit.add_undo(task_id, action.action, execution.undo)
@@ -215,6 +260,8 @@ class TaskSessions:
             "status": "awaiting_model",
             "result": execution.display,
             "undo_available": bool(execution.undo),
+            "approver": approver,
+            "preview_hash": preview_hash,
             "next_prompt": self._prompt(task_id, execution.output),
             "note": "动作已执行并记录审计；下一步请用 next_prompt 继续询问模型。",
         }
@@ -225,7 +272,7 @@ class TaskSessions:
             return self._error(f"任务不存在：{task_id}")
         if task["status"] != "awaiting_approval":
             return self._error("当前没有待批准动作")
-        self._approval_codes.pop(task_id, None)
+        self.audit.delete_approval(task_id)
         self.audit.append_action(task_id, int(task["step"]), task["pending_action"] or "", "rejected_user", "用户拒绝执行")
         self._finish(task_id, "cancelled", summary="用户拒绝了拟执行动作", clear_pending=True)
         return {"ok": True, "status": "cancelled", "note": "未执行任何变更"}
@@ -233,15 +280,19 @@ class TaskSessions:
     def cancel(self, task_id: str) -> dict[str, Any]:
         if self._task(task_id) is None:
             return self._error(f"任务不存在：{task_id}")
-        self._approval_codes.pop(task_id, None)
+        self.audit.delete_approval(task_id)
         self._finish(task_id, "cancelled", summary="用户取消任务", clear_pending=True)
         return {"ok": True, "status": "cancelled"}
+
+    def list(self, limit: int = 20) -> dict[str, Any]:
+        rows = [row for row in self.audit.list_tasks(limit) if row["connector"] == "mcp-task"]
+        return {"ok": True, "tasks": rows}
 
     def status(self, task_id: str) -> dict[str, Any]:
         task = self._task(task_id)
         if task is None:
             return self._error(f"任务不存在：{task_id}")
-        return {
+        result: dict[str, Any] = {
             "ok": True,
             "task_id": task_id,
             "status": task["status"],
@@ -254,6 +305,10 @@ class TaskSessions:
             "actions": self.audit.list_actions(task_id),
             "undoable": len(self.audit.undos(task_id)),
         }
+        if task["status"] == "awaiting_model":
+            # 服务重启后也能从 status 直接拿到下一轮提示词，不必依赖上次返回值。
+            result["next_prompt"] = self._prompt(task_id)
+        return result
 
     def undo(self, task_id: str) -> dict[str, Any]:
         if self._task(task_id) is None:
@@ -295,6 +350,7 @@ class TaskSessions:
             step=int(task["step"]) + 1,
             max_steps=self.config.max_steps,
             round_index=int(task["rounds"]) + 1,
+            history=self.audit.list_actions(task_id),
         )
         return prompt + ("\n\n" + extra if extra else "")
 

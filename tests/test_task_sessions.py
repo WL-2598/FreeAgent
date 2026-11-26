@@ -40,10 +40,12 @@ def test_full_task_flow_with_approval_and_undo(env: Env) -> None:
     assert wrong["ok"] is False
     assert not (env.workspace / "summary.md").exists()
 
-    approved = service.approve(task_id, token)
+    approved = service.approve(task_id, token, approver="claude-test")
     assert approved["status"] == "awaiting_model"
     assert (env.workspace / "summary.md").read_text() == "# 摘要"
     assert approved["undo_available"] is True
+    assert approved["approver"] == "claude-test"
+    assert len(approved["preview_hash"]) == 64
     assert service.approve(task_id, token)["ok"] is False, "批准令牌必须一次性"
 
     finished = service.reply(task_id, action("task.done", summary="完成"))
@@ -51,6 +53,9 @@ def test_full_task_flow_with_approval_and_undo(env: Env) -> None:
     status = service.status(task_id)
     assert status["status"] == "done"
     assert [row["decision"] for row in status["actions"]] == ["auto", "pending", "approved_mcp", "auto"]
+    approved_row = next(row for row in status["actions"] if row["decision"] == "approved_mcp")
+    assert approved_row["approver"] == "claude-test"
+    assert approved_row["preview_hash"] == approved["preview_hash"]
 
     undone = service.undo(task_id)
     assert undone["ok"] and not (env.workspace / "summary.md").exists()
@@ -119,6 +124,22 @@ def test_explicit_read_flag_allows_file_content_in_read_only_flow(env: Env) -> N
     assert "hello from file" in result["next_prompt"]
 
 
+def test_approval_token_survives_service_restart_until_used(env: Env) -> None:
+    first = sessions(env)
+    task_id = first.start("重启后批准测试")["task_id"]
+    pending = first.reply(
+        task_id, action("fs.write_text", path="after-restart.txt", content="ok")
+    )
+    token = pending["approval_token"]
+    assert not (env.workspace / "after-restart.txt").exists()
+
+    restarted = sessions(env)  # 模拟 MCP 服务进程重启
+    approved = restarted.approve(task_id, token)
+    assert approved["status"] == "awaiting_model"
+    assert (env.workspace / "after-restart.txt").read_text() == "ok"
+    assert restarted.approve(task_id, token)["ok"] is False  # 一次性
+
+
 def test_task_state_survives_new_session_instance(env: Env) -> None:
     first = sessions(env)
     task_id = first.start("跨实例状态测试")["task_id"]
@@ -135,3 +156,34 @@ def test_task_state_survives_new_session_instance(env: Env) -> None:
     assert pending["status"] == "awaiting_approval"
     assert second.approve(task_id, "stale-token")["ok"] is False
     assert not (env.workspace / "fresh").exists()
+
+
+def test_duplicate_action_is_blocked_locally(env: Env) -> None:
+    service = sessions(env)
+    task_id = service.start("防重复测试")["task_id"]
+    reply = action("fs.list", path=".")
+    first = service.reply(task_id, reply)
+    assert first["status"] == "awaiting_model"
+
+    duplicate = service.reply(task_id, reply)
+    assert duplicate["ok"] is False
+    assert "重复动作" in duplicate["error"]
+    assert service.status(task_id)["step"] == 1  # 没有消耗新步骤
+    assert len(service.status(task_id)["actions"]) == 1
+
+    done = service.reply(task_id, action("task.done", summary="换动作后完成"))
+    assert done["status"] == "done"
+
+
+def test_status_returns_next_prompt_for_cross_process_resume(env: Env) -> None:
+    service = sessions(env)
+    task_id = service.start("续跑测试")["task_id"]
+    service.reply(task_id, action("fs.list", path="."))
+
+    status = service.status(task_id)
+    assert status["status"] == "awaiting_model"
+    assert "next_prompt" in status
+    assert "已执行动作摘要" in status["next_prompt"]
+
+    service.reply(task_id, action("task.done", summary="完成"))
+    assert "next_prompt" not in service.status(task_id)

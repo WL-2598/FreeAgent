@@ -29,7 +29,7 @@ app.add_typer(config_app, name="config")
 
 COMMANDS = {
     "setup", "models", "login", "run", "approve", "reject", "status",
-    "cancel", "undo", "history", "demo", "task-demo", "mcp", "config", "--help", "-h",
+    "cancel", "undo", "history", "purge", "doctor", "demo", "task-demo", "mcp", "config", "--help", "-h",
 }
 
 
@@ -161,6 +161,9 @@ def status(task_id: str = typer.Argument(..., help="任务 ID")) -> None:
     typer.echo("\n动作记录：")
     for action in audit.list_actions(task_id):
         typer.echo(f"  #{action['seq']} [{action['decision']}] {action['action']} -> {action['result']}")
+        if action.get("approver") or action.get("preview_hash"):
+            digest = (action.get("preview_hash") or "")[:12]
+            typer.echo(f"      批准人：{action.get('approver') or 'unspecified'} · 预览哈希：{digest}…")
     pending = task_record.get("pending_preview")
     if pending:
         typer.echo(f"\n待批准预览：\n{pending}")
@@ -206,6 +209,36 @@ def mcp() -> None:
     mcp_main()
 
 
+@app.command()
+def purge(
+    days: Optional[int] = typer.Option(None, "--days", min=1, help="保留天数，默认取配置 audit_retention_days"),
+) -> None:
+    """清理超过保留期的本地任务与审计记录（仅本机）。"""
+    layout, cfg = _layout_and_config()
+    keep = days or cfg.audit_retention_days
+    removed = AuditLog(layout).purge_old(keep)
+    typer.echo(f"已清理 {removed} 个早于 {keep} 天的任务及其动作、撤销与审计记录。")
+
+
+@app.command()
+def doctor() -> None:
+    """测试前自检：环境、工作区权限、审计库、MCP 依赖与连接器状态。"""
+    from .doctor import run_doctor
+
+    result = run_doctor()
+    typer.echo(f"FreeAgent 自检：{'通过' if result['ok'] else '未通过'}")
+    for item in result["checks"]:
+        flag = "OK  " if item["ok"] else "FAIL"
+        typer.echo(f"[{flag}] {item['name']}：{item['detail']}")
+    typer.echo(f"MCP 工具数：{result['tool_count']}；写入：{'开启' if result['write_enabled'] else '关闭'}；"
+               f"文件内容读取：{'开启' if result['reads_enabled'] else '默认需批准'}")
+    typer.echo("下一步：")
+    for step in result["next_steps"]:
+        typer.echo(f"  · {step}")
+    if not result["ok"]:
+        raise typer.Exit(1)
+
+
 @config_app.command("show")
 def config_show() -> None:
     """显示当前配置（不会显示任何凭据）。"""
@@ -222,6 +255,51 @@ def config_allow_dir(path: str = typer.Argument(..., help="要授权为只读的
         cfg.extra_roots.append(resolved)
         save_config(cfg, layout)
     typer.echo(f"已授权只读目录：{resolved}")
+
+
+@config_app.command("deny-name")
+def config_deny_name(
+    value: str = typer.Argument(..., help="要拒绝的文件名，例如 secrets.txt"),
+    workspace: bool = typer.Option(False, "--workspace", help="只作用于当前工作区"),
+) -> None:
+    """追加敏感文件名规则（默认规则不可移除，只能更严格）。"""
+    layout, cfg = _layout_and_config()
+    name = value.strip().lower()
+    if not name or "/" in name:
+        raise FreeAgentError("文件名格式无效")
+    if workspace:
+        key = str(Path(cfg.workspace).expanduser().resolve())
+        rules = cfg.workspace_rules.setdefault(key, {})
+        names = rules.setdefault("deny_names", [])
+        if name not in names:
+            names.append(name)
+    elif name not in cfg.deny_names:
+        cfg.deny_names.append(name)
+    save_config(cfg, layout)
+    typer.echo(f"已加入拒绝名单：{name}（{'仅当前工作区' if workspace else '全局'}）")
+
+
+@config_app.command("deny-suffix")
+def config_deny_suffix(
+    value: str = typer.Argument(..., help="要拒绝的后缀，例如 .bak"),
+    workspace: bool = typer.Option(False, "--workspace", help="只作用于当前工作区"),
+) -> None:
+    """追加敏感后缀规则（默认规则不可移除，只能更严格）。"""
+    layout, cfg = _layout_and_config()
+    suffix = value.strip().lower()
+    suffix = suffix if suffix.startswith(".") else "." + suffix
+    if len(suffix) < 2 or "/" in suffix:
+        raise FreeAgentError("后缀格式无效")
+    if workspace:
+        key = str(Path(cfg.workspace).expanduser().resolve())
+        rules = cfg.workspace_rules.setdefault(key, {})
+        suffixes = rules.setdefault("deny_suffixes", [])
+        if suffix not in suffixes:
+            suffixes.append(suffix)
+    elif suffix not in cfg.deny_suffixes:
+        cfg.deny_suffixes.append(suffix)
+    save_config(cfg, layout)
+    typer.echo(f"已加入拒绝后缀：{suffix}（{'仅当前工作区' if workspace else '全局'}）")
 
 
 @config_app.command("allow-domain")

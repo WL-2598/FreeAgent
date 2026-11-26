@@ -44,7 +44,9 @@ openclaw mcp status --verbose
 | 工具 | 作用 | 变更 | 备注 |
 |---|---|---|---|
 | `fa_policy` | 返回工作区、域名白名单、写入开关与安全规则 | 否 | 先调用它确认边界 |
+| `fa_doctor` | 测试前自检：Python、权限、审计库、MCP 依赖、连接器 | 否 | 也可用 CLI `freeagent doctor` |
 | `fa_list` | 列出授权目录条目 | 否 | 不读文件内容 |
+| `fa_find` | 按文件名通配符递归查找路径 | 否 | 不读内容、不跟随符号链接，适合找 `*.pdf` |
 | `fa_read_text` | 读取工作区内文本文件 | 否（但内容会进入模型上下文） | 隐藏/敏感文件被策略拒绝；输出是不可信数据 |
 | `fa_browser_open` | 打开白名单域名页面 | 打开标签页 | 不点击、不提交、不抓取 |
 | `fa_prepare` | 校验变更动作，返回预览 + 一次性令牌 | **否** | 仅 `fs.mkdir` / `fs.move` / `fs.write_text` |
@@ -54,7 +56,7 @@ openclaw mcp status --verbose
 | `fa_task_reply` | 提交模型回复原文，本地解析/校验/预览 | 只读动作可执行；变更仅预览 | 返回下一步提示词或批准令牌 |
 | `fa_task_approve` | 用户确认后用令牌执行已校验动作 | **是** | 一次性令牌，执行后继续给下一步提示词 |
 | `fa_task_reject` / `fa_task_cancel` | 拒绝预览动作 / 取消任务 | 否 | 零变更 |
-| `fa_task_status` / `fa_task_undo` | 查看审计 / 逆序撤销 | 恢复性变更 | 状态保存在 SQLite，重启可查 |
+| `fa_task_status` / `fa_task_list` / `fa_task_undo` | 查看审计 / 列出会话 / 逆序撤销 | 恢复性变更 | 状态保存在 SQLite，重启可查 |
 
 `fa_prepare` 示例参数：
 
@@ -93,7 +95,7 @@ freeagent status <mcp-task-id>     # mcp- 开头的任务 ID
 
 ## 5. 测试流程建议
 
-1. **握手**：`openclaw mcp probe freeagent --json` 应列出 14 个 `fa_*` 工具。
+1. **握手**：`openclaw mcp probe freeagent --json` 应列出 17 个 `fa_*` 工具。
 2. **只读**：让 OpenClaw 调用 `fa_list` 列目录、`fa_read_text` 读一个测试文件并总结；检查工作区无变化。
 3. **正常变更**：让 OpenClaw「把 2023 年的 PDF 移到归档目录并写摘要」。期望顺序是 `fa_prepare` → 展示预览与风险 → 用户确认 → `fa_commit` → 报告 `task_id` 与是否可撤销。
 4. **未确认零变更**：只调用 `fa_prepare` 后检查文件系统，文件应完全没动；重复 `fa_commit` 应报「令牌已被使用」。
@@ -111,7 +113,7 @@ freeagent status <mcp-task-id>     # mcp- 开头的任务 ID
    - `fs.list` 等只读动作直接执行，返回 `next_prompt`；
    - 变更动作只返回 `preview`、`risk`、`approval_token`，**此时工作区完全没有变化**；
    - 越权动作或格式错误会安全停止，并返回原因。
-4. 把预览展示给用户并确认后，调用 `fa_task_approve(task_id, approval_token)`；执行后返回 `next_prompt`，回到第 2 步，直到模型返回 `task.done`。
+4. 把预览展示给用户并确认后，调用 `fa_task_approve(task_id, approval_token, approver="实际批准人")`。`approver` 和「所见的预览 + 动作参数」哈希会写入审计；执行后返回 `next_prompt`，回到第 2 步，直到模型返回 `task.done`。若不传，审计记为 `unspecified`（不是人类批准的证据）。
 5. 用 `fa_task_status(task_id)` 查看每步审计，用 `fa_task_undo(task_id)` 逆序撤销。
 
 示例序列：
@@ -128,7 +130,7 @@ fa_task_approve({"task_id": "...", "approval_token": "..."})
 fa_task_reply(..., "task.done") -> status=done
 ```
 
-任务状态保存在 SQLite，重启 MCP 服务后仍可用 `fa_task_status` 查询；批准令牌仅在内存中，重启后需重新 `fa_task_reply` 获取。请在 OpenClaw 工具策略中对 `fa_task_approve`（以及 `fa_commit`、`fa_undo`）要求用户批准。
+任务状态保存在 SQLite，重启 MCP 服务后仍可用 `fa_task_status` / `fa_task_list` 查询；当状态为 `awaiting_model` 时，`fa_task_status` 会一并返回 `next_prompt`，可以直接发给网页模型续跑。每次提示词还会附带最近 8 条动作摘要和「不要重复已成功且结果未变化的动作」规则，减少网页模型空转。若网页模型仍原样重复上一条已执行动作，本地会在 `fa_task_reply` 阶段直接拦截并返回修正提示词，不消耗任务步骤、不执行任何动作。任务级批准令牌只把哈希写入 SQLite，重启后在有效期内仍可批准，用过即失效；输错令牌不会烧掉正确令牌。请在 OpenClaw 工具策略中对 `fa_task_approve`（以及 `fa_commit`、`fa_undo`）要求用户批准。
 
 ## 7. 第一波测试：OpenClaw 用浏览器访问 DeepSeek 网页
 
@@ -149,6 +151,7 @@ fa_task_reply(..., "task.done") -> status=done
 ## 8. 故障排查
 
 - `doctor --probe` 失败：确认 `--command` 指向的 venv 可执行文件存在、已安装 `.[mcp]`、且先运行过 `freeagent setup`。
+- 想做细粒度过滤：每个 `fa_*` 工具都带 MCP 注解 `readOnlyHint` / `destructiveHint` / `openWorldHint`，例如只允许只读工具时可按 `readOnlyHint=true` 过滤；`fa_browser_open` 标记为 `openWorldHint=true`。
 - 工具列表为空：确认 OpenClaw 工具档位不是 `minimal`，并检查 `openclaw mcp tools freeagent --include ...`。
 - `Could not find DevToolsActivePort`：说明用户日常 Chrome 没有真正开启远程调试（Chrome 157 上开关位置可能变化）。不要反复切开关；直接改用隔离浏览器：`OPENCLAW_BROWSER_HEADLESS=0 openclaw browser --browser-profile openclaw start`，在打开的窗口里手动登录 DeepSeek，再用 `openclaw browser --browser-profile openclaw tabs` 验证。
 - `fa_prepare` 报「写入未启用」：重启 MCP 服务器时设置 `FREEAGENT_MCP_ALLOW_WRITE=1`。

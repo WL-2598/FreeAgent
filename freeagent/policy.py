@@ -10,18 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
-from .config import Config, workspace_path
+from .config import DEFAULT_DENY_NAMES, DEFAULT_DENY_SUFFIXES, Config, workspace_path
 from .errors import PolicyError
 
-# 默认不上传、不读写的名称/后缀。
-SENSITIVE_NAMES = frozenset(
-    {
-        ".env", ".env.local", ".npmrc", ".pypirc", ".netrc", ".htpasswd",
-        "id_rsa", "id_ed25519", "id_ecdsa", "credentials", "credentials.json",
-        "authorized_keys", "shadow", "passwd",
-    }
-)
-SENSITIVE_SUFFIXES = frozenset({".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"})
+# 兼容旧引用；实际默认值集中在 config.py，便于配置化扩展。
+SENSITIVE_NAMES = DEFAULT_DENY_NAMES
+SENSITIVE_SUFFIXES = DEFAULT_DENY_SUFFIXES
 READ_PURPOSES = frozenset({"read", "list"})
 WRITE_PURPOSES = frozenset({"write", "mkdir", "move_source", "move_dest"})
 
@@ -42,13 +36,24 @@ class Policy:
             Path(os.path.realpath(Path(item).expanduser())) for item in self.config.extra_roots
         )
 
-    def _safe_parts(self, relative: Path) -> None:
+    def _rules(self, root: Path) -> tuple[set[str], set[str]]:
+        """默认规则 + 全局追加 + 按工作区追加；任何配置都不能移除默认规则。"""
+        names = {str(item).lower() for item in self.config.deny_names} | set(SENSITIVE_NAMES)
+        suffixes = {str(item).lower() for item in self.config.deny_suffixes} | set(SENSITIVE_SUFFIXES)
+        extra = self.config.workspace_rules.get(str(root), {})
+        names |= {str(item).lower() for item in extra.get("deny_names", [])}
+        suffixes |= {str(item).lower() for item in extra.get("deny_suffixes", [])}
+        suffixes = {item if item.startswith(".") else "." + item for item in suffixes}
+        return names, suffixes
+
+    def _safe_parts(self, relative: Path, root: Path) -> None:
+        names, suffixes = self._rules(root)
         for part in relative.parts:
             if part in ("", ".", ".."):
                 continue
-            if part.startswith(".") or part.lower() in SENSITIVE_NAMES:
+            if part.startswith(".") or part.lower() in names:
                 raise PolicyError(f"拒绝访问隐藏或敏感路径组件：{part}")
-            if PurePosixPath(part).suffix.lower() in SENSITIVE_SUFFIXES:
+            if PurePosixPath(part).suffix.lower() in suffixes:
                 raise PolicyError(f"拒绝访问敏感文件类型：{part}")
 
     def path(self, raw: str, purpose: str) -> Path:
@@ -87,6 +92,7 @@ class Policy:
                 pairs.append((Path(os.path.realpath(configured)), configured))
         rel_abs: Path | None = None
         rel_real: Path | None = None
+        matched_root: Path | None = None
         for allowed_real, allowed_abs in pairs:
             try:
                 rel_real = real.relative_to(allowed_real)
@@ -97,16 +103,17 @@ class Policy:
             except ValueError:
                 # 路径通过根目录的符号链接别名给出，退回到真实相对路径。
                 rel_abs = rel_real
+            matched_root = allowed_real
             break
-        if rel_abs is None or rel_real is None:
+        if rel_abs is None or rel_real is None or matched_root is None:
             raise PolicyError(f"路径不在授权范围内：{raw}（允许的目录：{', '.join(str(r) for r in self.roots(purpose))}）")
 
-        self._safe_parts(rel_abs)
+        self._safe_parts(rel_abs, matched_root)
         if rel_real != rel_abs:
             # 符号链接指向授权树内的另一位置：读操作可放行，写操作一律拒绝。
             if purpose in WRITE_PURPOSES:
                 raise PolicyError(f"拒绝通过符号链接写入：{raw}")
-            self._safe_parts(rel_real)
+            self._safe_parts(rel_real, matched_root)
         if purpose == "write" and real.is_symlink():
             raise PolicyError(f"拒绝覆盖符号链接：{raw}")
         return real

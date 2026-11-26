@@ -75,8 +75,20 @@ class AuditLog:
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS undo_task ON undo_records(task_id, applied, id);
+                CREATE TABLE IF NOT EXISTS approval_tokens (
+                    task_id TEXT PRIMARY KEY,
+                    token_hash TEXT NOT NULL,
+                    expires_at REAL NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
+            # 旧数据库平滑升级：批准链字段是后续版本加入的。
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(actions)")}
+            if "approver" not in columns:
+                conn.execute("ALTER TABLE actions ADD COLUMN approver TEXT")
+            if "preview_hash" not in columns:
+                conn.execute("ALTER TABLE actions ADD COLUMN preview_hash TEXT")
 
     # ---- tasks ----
 
@@ -138,22 +150,33 @@ class AuditLog:
         decision: str,
         result: str,
         risk: str = "低",
+        *,
+        approver: str | None = None,
+        preview_hash: str | None = None,
     ) -> None:
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO actions (task_id, seq, action, decision, result, risk, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO actions (task_id, seq, action, decision, result, risk, created_at, "
+                "approver, preview_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     task_id, seq, log_text(action, 1200), decision,
                     log_text(result, 2000), risk, utcnow(),
+                    log_text(approver, 200) if approver else None,
+                    preview_hash,
                 ),
             )
-        self.event(task_id, "action", {"seq": seq, "action": action, "decision": decision, "result": result, "risk": risk})
+        event_data: dict[str, Any] = {
+            "seq": seq, "action": action, "decision": decision,
+            "result": result, "risk": risk,
+        }
+        if approver or preview_hash:
+            event_data.update(approver=approver, preview_hash=preview_hash)
+        self.event(task_id, "action", event_data)
 
     def list_actions(self, task_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT seq, action, decision, result, risk, created_at FROM actions "
+                "SELECT seq, action, decision, result, risk, created_at, approver, preview_hash FROM actions "
                 "WHERE task_id=? ORDER BY seq",
                 (task_id,),
             ).fetchall()
@@ -179,6 +202,28 @@ class AuditLog:
     def mark_undo_applied(self, undo_id: int) -> None:
         with self._connect() as conn:
             conn.execute("UPDATE undo_records SET applied=1 WHERE id=?", (undo_id,))
+
+    # ---- approval tokens (只存哈希，重启后仍可校验且不会泄露明文令牌) ----
+
+    def put_approval(self, task_id: str, token_hash: str, expires_at: float) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO approval_tokens (task_id, token_hash, expires_at, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (task_id, token_hash, expires_at, utcnow()),
+            )
+
+    def get_approval(self, task_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT token_hash, expires_at FROM approval_tokens WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def delete_approval(self, task_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM approval_tokens WHERE task_id=?", (task_id,))
 
     # ---- readable log ----
 
