@@ -17,6 +17,7 @@ from .config import Config, Layout, load_config, save_config, setup
 from .connectors import ManualConnector, MockConnector, resolve_connector
 from .errors import ConnectorError, FreeAgentError
 from .orchestrator import AutoApproveUI, ConsoleUI, TaskRunner, cancel_task
+from .retention import maybe_auto_purge
 from .utils import short_id
 
 app = typer.Typer(
@@ -29,7 +30,8 @@ app.add_typer(config_app, name="config")
 
 COMMANDS = {
     "setup", "models", "login", "run", "approve", "reject", "status",
-    "cancel", "undo", "history", "purge", "doctor", "demo", "task-demo", "mcp", "config", "--help", "-h",
+    "cancel", "undo", "history", "purge", "doctor", "demo", "task-demo", "mcp", "config",
+    "openclaw", "openclaw-skill", "openclaw-brief", "--help", "-h",
 }
 
 
@@ -212,24 +214,47 @@ def mcp() -> None:
 @app.command()
 def purge(
     days: Optional[int] = typer.Option(None, "--days", min=1, help="保留天数，默认取配置 audit_retention_days"),
+    apply: bool = typer.Option(False, "--apply", help="实际删除；默认只预览，不改动任何数据"),
 ) -> None:
-    """清理超过保留期的本地任务与审计记录（仅本机）。"""
+    """预览或清理超过保留期的本地任务与审计记录（仅本机）。"""
     layout, cfg = _layout_and_config()
     keep = days or cfg.audit_retention_days
-    removed = AuditLog(layout).purge_old(keep)
+    audit = AuditLog(layout)
+    preview = audit.purge_preview(keep)
+    typer.echo(
+        f"审计保留期 {keep} 天；将清理：任务 {preview['tasks']} 条、动作 {preview['actions']} 条、"
+        f"撤销记录 {preview['undo_records']} 条、JSONL 日志 {preview['log_files']} 个。"
+    )
+    if not apply:
+        typer.echo("这是预览，未删除任何记录。确认后加 --apply 才会清理。")
+        return
+    removed = audit.purge_old(keep)
     typer.echo(f"已清理 {removed} 个早于 {keep} 天的任务及其动作、撤销与审计记录。")
 
 
 @app.command()
-def doctor() -> None:
+def doctor(
+    as_json: bool = typer.Option(False, "--json", help="输出机器可读 JSON，便于 OpenClaw/Claude 解析"),
+) -> None:
     """测试前自检：环境、工作区权限、审计库、MCP 依赖与连接器状态。"""
     from .doctor import run_doctor
 
     result = run_doctor()
+    if as_json:
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        if not result["ok"]:
+            raise typer.Exit(1)
+        return
     typer.echo(f"FreeAgent 自检：{'通过' if result['ok'] else '未通过'}")
     for item in result["checks"]:
         flag = "OK  " if item["ok"] else "FAIL"
         typer.echo(f"[{flag}] {item['name']}：{item['detail']}")
+    typer.echo("连接器清单：")
+    for item in result.get("connectors", []):
+        flag = "可用" if item["available"] else "不可用"
+        typer.echo(f"  · {item['label']}（{item['id']}）：{flag} — {item['detail']}")
+    typer.echo(f"审计保留期：{result.get('audit_retention_days', '-')} 天；"
+               f"自动清理：{'开启' if result.get('audit_auto_purge') else '关闭'}")
     typer.echo(f"MCP 工具数：{result['tool_count']}；写入：{'开启' if result['write_enabled'] else '关闭'}；"
                f"文件内容读取：{'开启' if result['reads_enabled'] else '默认需批准'}")
     typer.echo("下一步：")
@@ -244,6 +269,15 @@ def config_show() -> None:
     """显示当前配置（不会显示任何凭据）。"""
     _, cfg = _layout_and_config()
     typer.echo(cfg.model_dump_json(indent=2, exclude_none=True))
+
+
+@config_app.command("auto-purge")
+def config_auto_purge(enabled: bool = typer.Argument(..., help="true 开启 / false 关闭")) -> None:
+    """显式开启或关闭启动时的过期审计自动清理（默认 false）。"""
+    layout, cfg = _layout_and_config()
+    cfg.audit_auto_purge = enabled
+    save_config(cfg, layout)
+    typer.echo(f"审计自动清理已{'开启' if enabled else '关闭'}；保留期 {cfg.audit_retention_days} 天。")
 
 
 @config_app.command("allow-dir")
@@ -302,6 +336,21 @@ def config_deny_suffix(
     typer.echo(f"已加入拒绝后缀：{suffix}（{'仅当前工作区' if workspace else '全局'}）")
 
 
+@config_app.command("web-model-url")
+def config_web_model_url(url: str = typer.Argument(..., help="你在浏览器里已登录的网页模型地址")) -> None:
+    """记录网页模型地址（只写进提示词与简报，FreeAgent 不会访问它）。"""
+    from urllib.parse import urlsplit
+
+    layout, cfg = _layout_and_config()
+    parts = urlsplit(url.strip())
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise FreeAgentError("请提供 http(s) 地址，例如 https://chat.deepseek.com")
+    cfg.web_model_url = url.strip()
+    save_config(cfg, layout)
+    typer.echo(f"网页模型地址已记录：{cfg.web_model_url}")
+    typer.echo("FreeAgent 不会访问该地址；它只用于告诉 OpenClaw 去哪个页面操作。")
+
+
 @config_app.command("allow-domain")
 def config_allow_domain(domain: str = typer.Argument(..., help="例如 example.com")) -> None:
     """把域名加入 browser.open 白名单。"""
@@ -313,6 +362,55 @@ def config_allow_domain(domain: str = typer.Argument(..., help="例如 example.c
         cfg.allowed_domains.append(value)
         save_config(cfg, layout)
     typer.echo(f"已允许域名：{value}")
+
+
+openclaw_app = typer.Typer(help="OpenClaw 接入：安装网页模型自动驾驶 Skill、生成任务简报")
+app.add_typer(openclaw_app, name="openclaw")
+
+
+@openclaw_app.command("install-skill")
+def openclaw_install_skill(
+    directory: Optional[Path] = typer.Option(
+        None, "--dir", help="技能根目录（默认 ~/.openclaw/workspace/skills）"
+    ),
+    force: bool = typer.Option(False, "--force", help="覆盖已存在的 SKILL.md"),
+    show: bool = typer.Option(False, "--show", help="只打印内容，不写文件"),
+) -> None:
+    """把 freeagent-web-loop 技能写进 OpenClaw 工作区，让 OpenClaw 自动驱动网页模型。"""
+    from .openclaw import SKILL_MD, SKILL_NAME, default_skills_dir, install_skill
+
+    if show:
+        typer.echo(SKILL_MD)
+        return
+    root = directory or default_skills_dir()
+    try:
+        path = install_skill(root, force=force)
+    except FileExistsError as exc:
+        typer.echo(f"技能已存在：{exc}\n如需覆盖请加 --force；只想看内容可用 --show。")
+        raise typer.Exit(1) from None
+    typer.echo(f"已安装 OpenClaw 技能：{SKILL_NAME}")
+    typer.echo(f"  文件：{path}")
+    typer.echo(f"  验证：openclaw skills list | grep {SKILL_NAME}")
+    typer.echo("  之后在 OpenClaw 里说：/freeagent-web-loop <你的任务>")
+    typer.echo("  技能只会把提示词送进网页模型并带回回复；变更仍要你批准。")
+
+
+@openclaw_app.command("brief")
+def openclaw_brief(
+    task: str = typer.Argument(..., help="要交给 OpenClaw 的任务描述"),
+    url: Optional[str] = typer.Option(None, "--url", help="网页模型地址（默认取配置 web_model_url）"),
+) -> None:
+    """生成一段可直接粘贴给 OpenClaw 的任务简报。"""
+    from .openclaw import render_brief
+
+    target = url
+    if not target:
+        try:
+            _, cfg = _layout_and_config()
+            target = cfg.web_model_url
+        except FreeAgentError:
+            target = "https://chat.deepseek.com"
+    typer.echo(render_brief(task, target))
 
 
 @app.command()
@@ -396,6 +494,7 @@ def task_demo() -> None:
 
 def main() -> None:
     """支持 `freeagent "任务描述"` 直接创建任务。"""
+    maybe_auto_purge()
     args = sys.argv[1:]
     if args and args[0] not in COMMANDS and not args[0].startswith("-"):
         sys.argv.insert(1, "run")

@@ -240,15 +240,53 @@ class AuditLog:
             # 审计日志写入失败不应破坏主流程，但状态库中仍有记录。
             pass
 
+    # ---- retention / purge ----
+
+    @staticmethod
+    def _retention_cutoff(days: int) -> tuple[str, float]:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        return cutoff.isoformat(timespec="seconds"), cutoff.timestamp()
+
+    def _old_log_files(self, cutoff_ts: float) -> list[Path]:
+        try:
+            return [
+                path for path in self.layout.audit_dir.glob("*.jsonl")
+                if path.is_file() and path.stat().st_mtime < cutoff_ts
+            ]
+        except OSError:
+            return []
+
+    def purge_preview(self, days: int) -> dict[str, int]:
+        """只统计、不删除：让用户先看到清理范围（默认 dry-run 原则）。"""
+        cutoff, cutoff_ts = self._retention_cutoff(days)
+        with self._connect() as conn:
+            tasks = conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE created_at < ?", (cutoff,)
+            ).fetchone()[0]
+            actions = conn.execute(
+                "SELECT COUNT(*) FROM actions WHERE task_id IN (SELECT id FROM tasks WHERE created_at < ?)",
+                (cutoff,),
+            ).fetchone()[0]
+            undos = conn.execute(
+                "SELECT COUNT(*) FROM undo_records WHERE task_id IN (SELECT id FROM tasks WHERE created_at < ?)",
+                (cutoff,),
+            ).fetchone()[0]
+        return {
+            "tasks": int(tasks),
+            "actions": int(actions),
+            "undo_records": int(undos),
+            "log_files": len(self._old_log_files(cutoff_ts)),
+        }
+
     def purge_old(self, days: int) -> int:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        cutoff, cutoff_ts = self._retention_cutoff(days)
+        log_files = self._old_log_files(cutoff_ts)
         with self._connect() as conn:
             with conn:
                 conn.execute("DELETE FROM actions WHERE task_id IN (SELECT id FROM tasks WHERE created_at < ?)", (cutoff,))
                 conn.execute("DELETE FROM undo_records WHERE task_id IN (SELECT id FROM tasks WHERE created_at < ?)", (cutoff,))
                 cursor = conn.execute("DELETE FROM tasks WHERE created_at < ?", (cutoff,))
                 removed = cursor.rowcount
-        for path in self.layout.audit_dir.glob("*.jsonl"):
-            if path.stat().st_mtime < (datetime.now(timezone.utc) - timedelta(days=days)).timestamp():
-                path.unlink(missing_ok=True)
+        for path in log_files:
+            path.unlink(missing_ok=True)
         return int(removed)

@@ -36,6 +36,12 @@ class Config(BaseModel):
         description="browser.open 允许访问的域名（需用户按需修改）",
     )
     default_connector: str = "manual"
+    # 仅供 OpenClaw 自动驾驶时参考的网页模型地址（FreeAgent 不访问它，只写进提示词/简报）。
+    web_model_url: str = Field(
+        default="https://chat.deepseek.com",
+        max_length=2048,
+        description="用户在浏览器里已登录的网页模型地址；仅用于生成说明，不发起任何请求",
+    )
     max_steps: int = Field(default=8, ge=1, le=50)
     max_rounds: int = Field(default=12, ge=1, le=100)
     max_file_bytes: int = Field(default=256 * 1024, gt=0, le=8 * 1024 * 1024)
@@ -44,6 +50,8 @@ class Config(BaseModel):
     model_timeout_seconds: int = Field(default=0, ge=0, description="0 表示不超时（手工粘贴需要）")
     parse_retries: int = Field(default=2, ge=0, le=5)
     audit_retention_days: int = Field(default=90, ge=1, le=3650)
+    # 默认关闭：自动清理会删除本地审计，必须由用户显式开启。
+    audit_auto_purge: bool = Field(default=False, description="启动时自动清理超过保留期的审计（需显式开启）")
     deny_names: list[str] = Field(
         default_factory=lambda: sorted(DEFAULT_DENY_NAMES),
         description="额外拒绝的文件名（默认规则永远生效，不可移除）",
