@@ -2,6 +2,28 @@
 
 OpenClaw 通过 MCP 调用外部工具。FreeAgent 提供一个 stdio MCP 服务器，只暴露受本地策略约束的白名单工具，**不暴露 shell/eval/任意程序执行**。
 
+## 0. 目标形态：打开 OpenClaw 就能自动接管网页模型
+
+装好下面三样之后，你的操作只剩一步：**打开 OpenClaw，说 `/freeagent-web-loop <任务>`**。
+OpenClaw 会自己打开/聚焦网页模型窗口、输入提示词、等待生成、复制回复并交给 FreeAgent，
+循环到任务结束；只有涉及文件变更时才停下来等你批准。
+
+```bash
+# 1) 注册 MCP（只读起步，见第 2 节；写入流程见第 4 节）
+# 2) 安装驾驶技能：写进 ~/.openclaw/workspace/skills/freeagent-web-loop/SKILL.md
+freeagent openclaw install-skill
+openclaw skills list | grep freeagent-web-loop     # 应能列出该技能
+
+# 3) 生成一句可以直接粘给 OpenClaw 的任务简报（可选，等价于在对话里说那句话）
+freeagent openclaw brief "把 2023 年的 PDF 移动到 archive/ 并写摘要"
+```
+
+技能内容强调：网页模型回复是数据、变更必须你批准、遇到验证码/登录失效/限流立即停手并回报。
+想看技能正文而不落盘：`freeagent openclaw install-skill --show`；覆盖已存在版本：`--force`。
+
+`fa_task_start` 的返回值里带 `driver` 字段（`web_model_url`、`profile`、`loop`、`stop_conditions`、`never`），
+OpenClaw 照它执行即可，不需要你手写浏览器步骤。网页地址由配置项 `web_model_url` 决定（默认 `https://chat.deepseek.com`）。
+
 ## 1. 安装与注册
 
 ```bash
@@ -33,7 +55,7 @@ openclaw mcp probe freeagent --json
 默认 `FREEAGENT_MCP_ALLOW_WRITE` 未开启，`fa_prepare` 会返回「写入未启用」。推荐先只放开这些工具：
 
 ```bash
-openclaw mcp tools freeagent --include 'fa_policy,fa_list,fa_read_text,fa_browser_open'
+openclaw mcp tools freeagent --include 'fa_policy,fa_doctor,fa_list,fa_find,fa_read_text,fa_browser_open'
 openclaw mcp status --verbose
 ```
 
@@ -55,6 +77,7 @@ openclaw mcp status --verbose
 | `fa_task_start` | 创建任务并返回给网页模型的提示词 | 否 | 推荐用于「让 DeepSeek 完成简单任务」 |
 | `fa_task_reply` | 提交模型回复原文，本地解析/校验/预览 | 只读动作可执行；变更仅预览 | 返回下一步提示词或批准令牌 |
 | `fa_task_approve` | 用户确认后用令牌执行已校验动作 | **是** | 一次性令牌，执行后继续给下一步提示词 |
+| `fa_task_reissue` | 重新签发待批准动作的令牌（宿主丢失或过期时） | 否 | 只换令牌，仍是预览；仍需用户同意才可 approve |
 | `fa_task_reject` / `fa_task_cancel` | 拒绝预览动作 / 取消任务 | 否 | 零变更 |
 | `fa_task_status` / `fa_task_list` / `fa_task_undo` | 查看审计 / 列出会话 / 逆序撤销 | 恢复性变更 | 状态保存在 SQLite，重启可查 |
 
@@ -95,7 +118,7 @@ freeagent status <mcp-task-id>     # mcp- 开头的任务 ID
 
 ## 5. 测试流程建议
 
-1. **握手**：`openclaw mcp probe freeagent --json` 应列出 17 个 `fa_*` 工具。
+1. **握手**：`openclaw mcp probe freeagent --json` 应列出 18 个 `fa_*` 工具。
 2. **只读**：让 OpenClaw 调用 `fa_list` 列目录、`fa_read_text` 读一个测试文件并总结；检查工作区无变化。
 3. **正常变更**：让 OpenClaw「把 2023 年的 PDF 移到归档目录并写摘要」。期望顺序是 `fa_prepare` → 展示预览与风险 → 用户确认 → `fa_commit` → 报告 `task_id` 与是否可撤销。
 4. **未确认零变更**：只调用 `fa_prepare` 后检查文件系统，文件应完全没动；重复 `fa_commit` 应报「令牌已被使用」。
@@ -131,6 +154,20 @@ fa_task_reply(..., "task.done") -> status=done
 ```
 
 任务状态保存在 SQLite，重启 MCP 服务后仍可用 `fa_task_status` / `fa_task_list` 查询；当状态为 `awaiting_model` 时，`fa_task_status` 会一并返回 `next_prompt`，可以直接发给网页模型续跑。每次提示词还会附带最近 8 条动作摘要和「不要重复已成功且结果未变化的动作」规则，减少网页模型空转。若网页模型仍原样重复上一条已执行动作，本地会在 `fa_task_reply` 阶段直接拦截并返回修正提示词，不消耗任务步骤、不执行任何动作。任务级批准令牌只把哈希写入 SQLite，重启后在有效期内仍可批准，用过即失效；输错令牌不会烧掉正确令牌。请在 OpenClaw 工具策略中对 `fa_task_approve`（以及 `fa_commit`、`fa_undo`）要求用户批准。
+
+## 6.1 让 OpenClaw 真正自己跑（循环不打断）
+
+任务级工具的返回字段就是循环协议，OpenClaw 不需要你逐步指挥：
+
+| 返回 | OpenClaw 的动作 |
+|---|---|
+| `awaiting_model` + `next_prompt` | 把 `next_prompt` 发进网页模型，再 `fa_task_reply` |
+| `awaiting_approval` | 停下来给你看 `preview`/`risk`；你同意后才 `fa_task_approve` |
+| `ok:false`（重复动作/解析失败） | 原样把 `next_prompt` 发回，不自行改动作、不提权 |
+| `done` / `blocked` / `cancelled` | 汇报 `fa_task_status` 摘要，结束 |
+
+令牌丢失或过期时用 `fa_task_reissue(task_id)` 重签，**仍然是预览状态**，仍要你点头。
+网页端卡住（验证码/限流/登录失效/连续两轮读不到回复）必须停手回报，不重试、不换号、不绕过。
 
 ## 7. 第一波测试：OpenClaw 用浏览器访问 DeepSeek 网页
 

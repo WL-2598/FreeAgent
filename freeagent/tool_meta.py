@@ -41,6 +41,8 @@ TOOL_POLICY: dict[str, ToolPolicy] = {
     # reply 可能执行只读工具，或只产生预览，不改文件。
     "fa_task_reply": ToolPolicy(True),
     "fa_task_approve": ToolPolicy(False, destructive=True),
+    # 只重签发「预览中」动作的令牌，不执行任何变更，所以是只读的。
+    "fa_task_reissue": ToolPolicy(True),
     "fa_task_reject": ToolPolicy(False),
     "fa_task_cancel": ToolPolicy(False),
     "fa_task_list": ToolPolicy(True, idempotent=True),

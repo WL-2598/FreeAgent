@@ -30,7 +30,8 @@ app.add_typer(config_app, name="config")
 
 COMMANDS = {
     "setup", "models", "login", "run", "approve", "reject", "status",
-    "cancel", "undo", "history", "purge", "doctor", "demo", "task-demo", "mcp", "config", "--help", "-h",
+    "cancel", "undo", "history", "purge", "doctor", "demo", "task-demo", "mcp", "config",
+    "openclaw", "openclaw-skill", "openclaw-brief", "--help", "-h",
 }
 
 
@@ -335,6 +336,21 @@ def config_deny_suffix(
     typer.echo(f"已加入拒绝后缀：{suffix}（{'仅当前工作区' if workspace else '全局'}）")
 
 
+@config_app.command("web-model-url")
+def config_web_model_url(url: str = typer.Argument(..., help="你在浏览器里已登录的网页模型地址")) -> None:
+    """记录网页模型地址（只写进提示词与简报，FreeAgent 不会访问它）。"""
+    from urllib.parse import urlsplit
+
+    layout, cfg = _layout_and_config()
+    parts = urlsplit(url.strip())
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise FreeAgentError("请提供 http(s) 地址，例如 https://chat.deepseek.com")
+    cfg.web_model_url = url.strip()
+    save_config(cfg, layout)
+    typer.echo(f"网页模型地址已记录：{cfg.web_model_url}")
+    typer.echo("FreeAgent 不会访问该地址；它只用于告诉 OpenClaw 去哪个页面操作。")
+
+
 @config_app.command("allow-domain")
 def config_allow_domain(domain: str = typer.Argument(..., help="例如 example.com")) -> None:
     """把域名加入 browser.open 白名单。"""
@@ -346,6 +362,55 @@ def config_allow_domain(domain: str = typer.Argument(..., help="例如 example.c
         cfg.allowed_domains.append(value)
         save_config(cfg, layout)
     typer.echo(f"已允许域名：{value}")
+
+
+openclaw_app = typer.Typer(help="OpenClaw 接入：安装网页模型自动驾驶 Skill、生成任务简报")
+app.add_typer(openclaw_app, name="openclaw")
+
+
+@openclaw_app.command("install-skill")
+def openclaw_install_skill(
+    directory: Optional[Path] = typer.Option(
+        None, "--dir", help="技能根目录（默认 ~/.openclaw/workspace/skills）"
+    ),
+    force: bool = typer.Option(False, "--force", help="覆盖已存在的 SKILL.md"),
+    show: bool = typer.Option(False, "--show", help="只打印内容，不写文件"),
+) -> None:
+    """把 freeagent-web-loop 技能写进 OpenClaw 工作区，让 OpenClaw 自动驱动网页模型。"""
+    from .openclaw import SKILL_MD, SKILL_NAME, default_skills_dir, install_skill
+
+    if show:
+        typer.echo(SKILL_MD)
+        return
+    root = directory or default_skills_dir()
+    try:
+        path = install_skill(root, force=force)
+    except FileExistsError as exc:
+        typer.echo(f"技能已存在：{exc}\n如需覆盖请加 --force；只想看内容可用 --show。")
+        raise typer.Exit(1) from None
+    typer.echo(f"已安装 OpenClaw 技能：{SKILL_NAME}")
+    typer.echo(f"  文件：{path}")
+    typer.echo(f"  验证：openclaw skills list | grep {SKILL_NAME}")
+    typer.echo("  之后在 OpenClaw 里说：/freeagent-web-loop <你的任务>")
+    typer.echo("  技能只会把提示词送进网页模型并带回回复；变更仍要你批准。")
+
+
+@openclaw_app.command("brief")
+def openclaw_brief(
+    task: str = typer.Argument(..., help="要交给 OpenClaw 的任务描述"),
+    url: Optional[str] = typer.Option(None, "--url", help="网页模型地址（默认取配置 web_model_url）"),
+) -> None:
+    """生成一段可直接粘贴给 OpenClaw 的任务简报。"""
+    from .openclaw import render_brief
+
+    target = url
+    if not target:
+        try:
+            _, cfg = _layout_and_config()
+            target = cfg.web_model_url
+        except FreeAgentError:
+            target = "https://chat.deepseek.com"
+    typer.echo(render_brief(task, target))
 
 
 @app.command()

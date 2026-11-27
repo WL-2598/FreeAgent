@@ -107,6 +107,7 @@ def test_mcp_stdio_handshake_and_tools(env: Env) -> None:
         "fa_prepare", "fa_commit", "fa_undo",
         "fa_task_start", "fa_task_reply", "fa_task_approve", "fa_task_reject",
         "fa_task_cancel", "fa_task_status", "fa_task_list", "fa_task_undo",
+        "fa_task_reissue",
     }
     assert expected <= names
     assert "写入状态：关闭" in text
@@ -123,6 +124,9 @@ def test_mcp_stdio_handshake_and_tools(env: Env) -> None:
     assert hint("fa_commit", "destructive_hint") is True
     assert hint("fa_browser_open", "open_world_hint") is True
     assert hint("fa_undo", "destructive_hint") is True
+    # 重签发只换令牌、不执行动作，必须被宿主识别为只读。
+    assert hint("fa_task_reissue", "read_only_hint") is True
+    assert hint("fa_task_reissue", "destructive_hint") is False
 
 
 def test_mcp_stdio_task_level_flow(env: Env) -> None:

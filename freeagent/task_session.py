@@ -17,6 +17,7 @@ from typing import Any
 from .audit import AuditLog
 from .config import Config, workspace_path
 from .errors import ActionError, FreeAgentError, ParseError
+from .openclaw import SKILL_NAME
 from .orchestrator import time_limit
 from .planner import build_prompt
 from .policy import Policy
@@ -76,7 +77,35 @@ class TaskSessions:
             "status": "awaiting_model",
             "prompt": self._prompt(task_id),
             "boundary": self.policy.describe(),
+            "driver": self._driver(),
             "note": "把 prompt 发给网页模型，再把回复原文交给 fa_task_reply。",
+        }
+
+    def _driver(self) -> dict[str, Any]:
+        """给 OpenClaw 这类宿主的最小驾驶说明；FreeAgent 自己不访问网页。"""
+        return {
+            "web_model_url": self.config.web_model_url,
+            "profile": "openclaw",
+            "headless": False,
+            "loop": [
+                "openclaw browser --browser-profile openclaw tabs（编号每次都变，先 tabs 再操作）",
+                "snapshot 找到输入框 ref → 清空草稿 → 粘贴 prompt → 提交",
+                "等待停止生成按钮消失且最后一条消息稳定（再等 1–2 秒）",
+                "只复制助手回复正文 → fa_task_reply",
+            ],
+            "stop_conditions": [
+                "验证码 / 二次验证 / 人机验证",
+                "登录失效或需要重新同意条款",
+                "限流、额度用尽、稍后再试",
+                "连续 2 轮找不到输入框或读不到回复",
+            ],
+            "never": [
+                "读取或转存 Cookie / 令牌",
+                "代替用户登录或输入密码",
+                "绕过验证码、付费墙、速率限制",
+                "未经用户同意调用 fa_task_approve",
+            ],
+            "skill": f"{SKILL_NAME}（freeagent openclaw-skill --install）",
         }
 
     def reply(self, task_id: str, response: str) -> dict[str, Any]:
@@ -264,6 +293,40 @@ class TaskSessions:
             "preview_hash": preview_hash,
             "next_prompt": self._prompt(task_id, execution.output),
             "note": "动作已执行并记录审计；下一步请用 next_prompt 继续询问模型。",
+        }
+
+    def reissue(self, task_id: str) -> dict[str, Any]:
+        """重新签发批准令牌：宿主丢失/令牌过期时用，仍然只是一次性令牌，不会执行动作。"""
+        task = self._task(task_id)
+        if task is None:
+            return self._error(f"任务不存在：{task_id}")
+        if task["status"] != "awaiting_approval":
+            return self._error(f"任务状态为 {task['status']}，没有待批准动作")
+        if not task["pending_action"]:
+            return self._error("没有待批准动作的预览；请重新提交模型回复")
+        try:
+            action = parse_action(task["pending_action"])
+            preview = self.registry.get(action.action).preview(action, self.policy)
+        except (FreeAgentError, KeyError, ValueError) as exc:
+            return self._error(f"重新校验失败，未执行任何变更：{log_text(str(exc), 600)}")
+        token = secrets.token_urlsafe(18)
+        self.audit.put_approval(
+            task_id,
+            hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            time.time() + self.approval_ttl,
+        )
+        self.audit.update_task(task_id, pending_preview=preview.text())
+        self.audit.event(task_id, "approval_reissued", {"risk": preview.risk, "ttl": self.approval_ttl})
+        return {
+            "ok": True,
+            "task_id": task_id,
+            "status": "awaiting_approval",
+            "action": describe_action(action),
+            "preview": preview.text(),
+            "risk": preview.risk,
+            "approval_token": token,
+            "expires_in_seconds": self.approval_ttl,
+            "note": "仍是预览状态，未执行任何变更。必须先拿到用户明确同意，再调用 fa_task_approve。",
         }
 
     def reject(self, task_id: str) -> dict[str, Any]:

@@ -135,7 +135,7 @@ def test_doctor_cli(env: Env) -> None:
     result = invoke("doctor")
     assert result.exit_code == 0, result.output
     assert "FreeAgent 自检：通过" in result.output
-    assert "MCP 工具数：17" in result.output
+    assert "MCP 工具数：18" in result.output
     assert "连接器清单" in result.output
     assert "网页自动化" in result.output
 
@@ -145,3 +145,11 @@ def test_doctor_cli(env: Env) -> None:
     assert payload["ok"] is True
     assert {item["id"] for item in payload["connectors"]} == {"manual", "mock", "web"}
     assert payload["audit_auto_purge"] is False
+
+
+def test_config_web_model_url_rejects_bad_scheme(env: Env) -> None:
+    bad = invoke("config", "web-model-url", "javascript:alert(1)")
+    assert bad.exit_code == 1
+    ok = invoke("config", "web-model-url", "https://chat.deepseek.com")
+    assert ok.exit_code == 0, ok.output
+    assert json.loads(invoke("config", "show").output)["web_model_url"] == "https://chat.deepseek.com"

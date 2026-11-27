@@ -10,7 +10,7 @@ def test_doctor_reports_ready_environment(env: Env) -> None:
     assert result["ok"] is True
     names = {item["name"] for item in result["checks"]}
     assert {"Python 版本", "配置文件", "工作区存在", "工作区可写", "审计数据库", "MCP 依赖", "手动连接器", "网页自动化默认禁用"} <= names
-    assert result["tool_count"] == 17
+    assert result["tool_count"] == 18
     assert {item["id"] for item in result["connectors"]} == {"manual", "mock", "web"}
     assert result["audit_retention_days"] == 90
     assert result["audit_auto_purge"] is False
